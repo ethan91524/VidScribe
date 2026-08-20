@@ -9,7 +9,7 @@ import { formatTime, formatTimeMs } from "./segments";
 import type { Segment } from "./types";
 
 const RULER_H = 22;
-const STRIP_H = 150;
+const DEFAULT_STRIP_H = 150; // 沒有指定高度時的波形高度
 const MIN_LEN = 0.05;
 
 interface WaveformProps {
@@ -30,6 +30,8 @@ interface WaveformProps {
   onSelect: (idx: number) => void;
   onCommitTimes: (id: string, start: number, end: number) => void;
   onCreate: (start: number, end: number) => void;
+  /** 波形區可用總高(含底部資訊列);拖曳分隔線時由 Editor 傳入 */
+  height?: number;
 }
 
 interface DragState {
@@ -70,6 +72,7 @@ export default function Waveform({
   onSelect,
   onCommitTimes,
   onCreate,
+  height,
 }: WaveformProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -132,13 +135,26 @@ export default function Waveform({
     [pps, viewW]
   );
 
+  // 波形高度要跟著容器長,不然拖大分隔線只會多出一片空白。
+  // 底部資訊列高度用量的,不寫死。
+  const footerRef = useRef<HTMLDivElement>(null);
+  const [stripH, setStripH] = useState(DEFAULT_STRIP_H);
+  useEffect(() => {
+    if (!height) {
+      setStripH(DEFAULT_STRIP_H);
+      return;
+    }
+    const fh = footerRef.current?.offsetHeight ?? 40;
+    setStripH(Math.max(height - fh, 60));
+  }, [height]);
+
   // ---- 畫波形與尺標 ----
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const dpr = window.devicePixelRatio || 1;
     const w = viewW;
-    const h = STRIP_H;
+    const h = stripH;
     if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
       canvas.width = w * dpr;
       canvas.height = h * dpr;
@@ -196,7 +212,7 @@ export default function Waveform({
       ctx.arc(x, RULER_H + 7, 3, 0, Math.PI * 2);
       ctx.fill();
     }
-  }, [peaks, maxPeak, pps, scrollLeft, viewW, currentTime, duration, cuts]);
+  }, [peaks, maxPeak, pps, scrollLeft, viewW, currentTime, duration, cuts, stripH]);
 
   // ---- 字幕方塊拖拉 ----
 
@@ -369,10 +385,11 @@ export default function Waveform({
     [timeAt, onCreate, onSeek]
   );
 
-  // 雙擊波形空白處新增 Mark 點(雙擊 Mark 點本身則是移除,在該元素上處理)
+  // 雙擊波形任一處新增 Mark 點(雙擊 Mark 點本身則是移除,在該元素上 stopPropagation)。
+  // 這裡不能限定 e.target 必須是 canvas:字幕卡是絕對定位疊在 canvas 上的,
+  // 波形排滿字幕時幾乎點不到 canvas,會讓人以為沒有這個功能。
   const onInnerDoubleClick = useCallback(
     (e: React.MouseEvent) => {
-      if (!(e.target instanceof HTMLCanvasElement)) return;
       onAddMark(Math.round(timeAt(e.clientX) * 1000) / 1000);
     },
     [timeAt, onAddMark]
@@ -396,7 +413,7 @@ export default function Waveform({
         <div
           className="wave-inner"
           ref={innerRef}
-          style={{ width: innerW, height: STRIP_H }}
+          style={{ width: innerW, height: stripH }}
           onPointerDown={onInnerPointerDown}
           onPointerMove={onInnerPointerMove}
           onPointerUp={onInnerPointerUp}
@@ -465,7 +482,7 @@ export default function Waveform({
           <div className="wave-playhead" style={{ left: currentTime * pps }} />
         </div>
       </div>
-      <div className="wave-footer">
+      <div className="wave-footer" ref={footerRef}>
         <span className="wave-seg-info">
           {sel ? (
             <>

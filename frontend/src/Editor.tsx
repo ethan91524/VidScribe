@@ -1257,6 +1257,7 @@ export default function Editor({ projectId }: { projectId: string }) {
         {peaks && project.duration ? (
           <Waveform
             peaks={peaks}
+            height={waveHeight}
             duration={project.duration}
             segments={segments}
             currentTime={currentTime}
@@ -1457,7 +1458,7 @@ export default function Editor({ projectId }: { projectId: string }) {
           aria-label="拖曳調整影片區/字幕區寬度"
         />
 
-        <section className="subtitle-pane">
+        <section className={"subtitle-pane" + (styleOpen ? " style-open" : "")}>
           {styleOpen && (
             <StylePanel
               style={

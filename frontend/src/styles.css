@@ -714,6 +714,11 @@ button {
 
 /* ---- 字幕列表 ---- */
 
+.subtitle-pane.style-open {
+  /* 讓出左側空間給浮動的樣式面板(300px + 左右留白) */
+  padding-left: 324px;
+}
+
 .subtitle-pane {
   position: relative; /* 字幕樣式面板靠這個當定位基準 */
   display: flex;
@@ -1613,7 +1618,8 @@ a.btn {
   /* 浮在字幕區的右上角:維持原本的窄面板,只是靠右顯示,不會蓋到左邊的影片 */
   position: absolute;
   top: 10px;
-  right: 12px;
+  /* 緊貼影片右側(字幕區的左緣),不是整個視窗最右邊 */
+  left: 12px;
   z-index: 6;
   width: 300px;
   max-width: calc(100% - 24px);
