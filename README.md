@@ -8,12 +8,23 @@
 > optional AI proofreading via your own Claude Code subscription. Everything runs
 > on your machine — no cloud, no account.
 
+本專案衍生自 [AinxietyLab/VidScribe](https://github.com/AinxietyLab/VidScribe)(MIT),
+在其基礎上加了搜尋取代、行間合併箭頭、逐字位置點與影片內字幕樣式編輯器。
+
 ## 功能
 
 - **語音辨識**:faster-whisper(large-v3),NVIDIA GPU 加速、無卡自動退 CPU;
   輸出自動簡轉繁+台灣用語(OpenCC)
 - **編輯器**:Enter 斷句、句首 Backspace 合併、Tab 跳行、全程鍵盤操作;
-  復原/重做、自動存檔、搜尋過濾、每句字數與閱讀速度統計
+  復原/重做、自動存檔、每句字數與閱讀速度統計
+- **搜尋取代**:標出全部出現處並顯示「第幾/共幾處」,‹ › 逐處跳看,
+  可取代目前這處或一次全部(人名打錯一次改完);取代進復原堆疊,Ctrl+Z 可救
+- **行間合併**:滑鼠移到兩句之間會浮出箭頭,一鍵把下一句併上來
+- **逐字位置點**:按住 `Alt`,每句下方浮出該句每個字的發音位置;
+  點任一點直接跳到那個字,不用來回拖播放頭
+- **字幕樣式編輯器**:點畫面上的字幕就能調字型、字級、字距、字色與透明度、
+  底框、描邊、陰影、對齊、淡入;字幕可直接拖曳定位、拖右下角握把改大小。
+  設定隨專案存檔,燒錄成品與畫面預覽一致
 - **波形區**:拖拉字幕方塊調時間、磁吸(鄰句/Mark 點/畫面切點)、
   B 鍵切開、雙擊設 Mark 點、切點偵測(ffmpeg 場景偵測)、hover 跟播
 - **詞庫**:「錯誤寫法 → 正確寫法」清單,每次辨識完自動取代(人名、品牌名一勞永逸)
@@ -28,7 +39,7 @@
 需求:Windows 10/11。有 NVIDIA 顯卡最好(辨識快很多),沒有也能用。
 
 ```
-git clone <本倉庫>
+git clone https://github.com/ethan91524/VidScribe.git
 點兩下 setup.bat        ← 自動安裝 Python/ffmpeg、建環境、產生體檢報告
 點兩下 start.bat        ← 啟動,瀏覽器自動開 http://127.0.0.1:8765
 ```
@@ -71,6 +82,9 @@ git clone <本倉庫>
 | `Delete` | 刪除選中的字幕 |
 | 雙擊波形 | 新增 / 移除 Mark 點 |
 | `Ctrl+Z` / `Ctrl+Y` | 復原 / 重做 |
+| 按住 `Alt` | 顯示逐字位置點(點一下跳到該字) |
+| 搜尋框 `Enter` | 跳到下一處符合 |
+| 點畫面上的字幕 | 打開字幕樣式面板 |
 
 ## 設定(環境變數,可寫進 start.bat)
 
@@ -105,6 +119,9 @@ Origin 檢查(擋 CSRF)。
 
 靈感來自 YouTuber [壹加壹](https://www.youtube.com/@1plus1tw) 開發的字幕網站
 What'Sub 的介紹影片——本專案是它的個人本機版翻作,介面風格亦致敬該作品。
+
+上游專案 [AinxietyLab/VidScribe](https://github.com/AinxietyLab/VidScribe) 提供了
+辨識、波形編輯、詞庫、燒錄等基礎架構,本倉庫在其上擴充編輯與樣式功能。
 
 ## License
 
