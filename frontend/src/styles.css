@@ -1282,3 +1282,369 @@ a.btn {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ============================================================
+   What'Sub 對齊功能:搜尋取代 / 行間合併 / 逐字位置點 / 字幕樣式面板
+   ============================================================ */
+
+/* ---- 搜尋計數與導航 ---- */
+
+.search-count {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.search-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.search-nav .icon-btn.small {
+  width: 22px;
+  height: 22px;
+  font-size: 15px;
+  border-radius: 6px;
+}
+
+.search-nav .icon-btn.small:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ---- 取代列 ---- */
+
+.replace-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 14px 8px;
+  padding: 0 12px;
+  flex-shrink: 0;
+}
+
+.replace-arrow {
+  color: var(--muted);
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.replace-row input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.replace-row input:focus {
+  outline: none;
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px var(--green-soft);
+}
+
+/* ---- 搜尋高亮 ---- */
+
+.row-text mark {
+  background: #fff1a8;
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+.row-text mark.cur {
+  background: var(--green);
+  color: var(--green-ink);
+}
+
+/* ---- 列間合併箭頭 ---- */
+
+.row-text-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sub-row {
+  position: relative;
+}
+
+.merge-btn {
+  position: absolute;
+  left: 14px;
+  bottom: -9px;
+  z-index: 3;
+  width: 20px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+.sub-row:hover .merge-btn {
+  opacity: 1;
+}
+
+.merge-btn:hover {
+  color: var(--green-dark);
+  border-color: var(--green);
+}
+
+/* ---- 逐字位置點(按住 Alt) ---- */
+
+.word-dots {
+  position: relative;
+  height: 10px;
+  width: 100%;
+  margin-top: 2px;
+}
+
+.word-dots .dot {
+  position: absolute;
+  top: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  transform: translateX(-50%);
+  cursor: pointer;
+  transition: transform 0.1s, background 0.1s;
+}
+
+.word-dots .dot:hover {
+  background: var(--green);
+  transform: translateX(-50%) scale(1.6);
+}
+
+/* ---- 字幕樣式:影片內預覽疊層 ---- */
+
+.subtitle-overlay-wrap {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.subtitle-box {
+  position: absolute;
+  pointer-events: auto;
+  cursor: move;
+  line-height: 1.4;
+  user-select: none;
+  touch-action: none;
+}
+
+.subtitle-box.open {
+  outline: 1.5px dashed var(--green);
+  outline-offset: 6px;
+  border-radius: 4px;
+}
+
+.style-handle {
+  position: absolute;
+  right: -8px;
+  bottom: -8px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--green);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  cursor: ns-resize;
+}
+
+.style-chip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  background: rgba(20, 20, 20, 0.85);
+  color: #fff;
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.subtitle-box.fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* ---- 字幕樣式面板 ---- */
+
+.player-pane {
+  position: relative;
+}
+
+.style-panel {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: min(300px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  overflow-y: auto;
+  background: var(--panel);
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+  z-index: 30;
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.style-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.style-panel-title {
+  font-size: 14.5px;
+  font-weight: 700;
+}
+
+.style-panel-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.style-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.style-field label {
+  flex-shrink: 0;
+  min-width: 56px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.style-field .select {
+  flex: 1;
+  min-width: 0;
+}
+
+.style-field input[type="color"] {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.style-hex {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 12px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.style-hex:focus {
+  outline: none;
+  border-color: var(--green);
+}
+
+.style-range-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.style-range-row label {
+  flex-shrink: 0;
+  min-width: 56px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.style-range-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--green);
+}
+
+.style-range-row input[type="range"]:disabled {
+  opacity: 0.4;
+}
+
+.style-value {
+  flex-shrink: 0;
+  width: 46px;
+  text-align: right;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.style-indent-row {
+  padding-left: 16px;
+  border-left: 2px solid var(--line);
+}
+
+.style-indent {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: -2px;
+  padding-left: 16px;
+  border-left: 2px solid var(--line);
+}
+
+.style-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.style-checkbox input {
+  accent-color: var(--green);
+}
+
+.style-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.style-reset {
+  align-self: flex-start;
+  margin-top: 4px;
+}

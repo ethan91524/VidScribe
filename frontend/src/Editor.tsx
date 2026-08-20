@@ -20,7 +20,9 @@ import {
 } from "./segments";
 import { diffParts } from "./diff";
 import SafeFrame, { SAFE_FRAMES, matchPresetByRatio } from "./SafeFrame";
+import { SubtitleOverlay, StylePanel } from "./StyleOverlay";
 import {
+  DEFAULT_STYLE,
   RUNNING_STATUSES,
   statusLabel,
   type BurnJob,
@@ -29,6 +31,7 @@ import {
   type FixSuggestion,
   type Project,
   type Segment,
+  type SubStyle,
 } from "./types";
 import Waveform from "./Waveform";
 
@@ -58,9 +61,30 @@ const HOTKEYS: [string, string][] = [
   ["Delete", "刪除選中的字幕"],
   ["雙擊波形", "新增 / 移除 Mark 點"],
   ["Ctrl+Z / Ctrl+Y", "復原 / 重做"],
+  ["按住 Alt", "顯示逐字位置點(點一下跳到該字)"],
 ];
 
 const round3 = (x: number) => Math.round(x * 1000) / 1000;
+
+/** 把 text 內所有 query 出現處包成 <mark>,curPos 那一處多加 .cur。 */
+function renderHighlighted(text: string, query: string, curPos: number) {
+  if (!query) return text;
+  const parts: React.ReactNode[] = [];
+  let from = 0;
+  while (true) {
+    const pos = text.indexOf(query, from);
+    if (pos < 0) break;
+    if (pos > from) parts.push(text.slice(from, pos));
+    parts.push(
+      <mark key={pos} className={pos === curPos ? "cur" : undefined}>
+        {text.slice(pos, pos + query.length)}
+      </mark>
+    );
+    from = pos + query.length;
+  }
+  parts.push(text.slice(from));
+  return parts;
+}
 
 interface EditingState {
   id: string;
@@ -85,6 +109,7 @@ export default function Editor({ projectId }: { projectId: string }) {
   const [cuts, setCuts] = useState<number[]>([]);
   const [cutsStatus, setCutsStatus] = useState("idle");
   const [safeFrame, setSafeFrame] = useState("off");
+  const [videoDims, setVideoDims] = useState({ w: 0, h: 0 });
   const [burnJob, setBurnJob] = useState<BurnJob | null>(null);
   const [editing, setEditing] = useState<EditingState | null>(null);
   const editingRef = useRef(editing);
@@ -93,6 +118,18 @@ export default function Editor({ projectId }: { projectId: string }) {
   const selectedIdxRef = useRef(selectedIdx);
   selectedIdxRef.current = selectedIdx;
   const [query, setQuery] = useState("");
+  const [replaceValue, setReplaceValue] = useState("");
+  const [matchIdx, setMatchIdx] = useState(0);
+  const matchIdxRef = useRef(matchIdx);
+  matchIdxRef.current = matchIdx;
+  const followMatchRef = useRef(false);
+  const [showDots, setShowDots] = useState(false);
+
+  const [subStyle, setSubStyleState] = useState<SubStyle>(DEFAULT_STYLE);
+  const styleRef = useRef(subStyle);
+  styleRef.current = subStyle;
+  const [styleOpen, setStyleOpen] = useState(false);
+  const justLoadedStyleRef = useRef<SubStyle | null>(null);
 
   const [llmAvailable, setLlmAvailable] = useState(false);
   const [fixJob, setFixJob] = useState<FixJob | null>(null);
@@ -128,6 +165,11 @@ export default function Editor({ projectId }: { projectId: string }) {
       const m = s.marks ?? [];
       justLoadedMarksRef.current = m;
       setMarks(m);
+      // 複製一份,避免這個 ref 跟共用的 DEFAULT_STYLE 常數同一個參照
+      // (不然「還原」按鈕若剛好也還原成 DEFAULT_STYLE,dirty 判斷會誤判成沒變動而漏存)
+      const st = s.style ? s.style : { ...DEFAULT_STYLE };
+      justLoadedStyleRef.current = st;
+      setSubStyleState(st);
     });
   }, [projectId, resetSegments]);
 
@@ -265,7 +307,7 @@ export default function Editor({ projectId }: { projectId: string }) {
   const doSave = useCallback(() => {
     setSaveState("saving");
     api
-      .saveSubtitles(projectId, segmentsRef.current, marksRef.current)
+      .saveSubtitles(projectId, segmentsRef.current, marksRef.current, styleRef.current)
       .then(() => setSaveState("saved"))
       .catch(() => {
         setSaveState("error");
@@ -292,6 +334,16 @@ export default function Editor({ projectId }: { projectId: string }) {
     saveTimer.current = window.setTimeout(doSave, 800);
     return () => window.clearTimeout(saveTimer.current);
   }, [marks, doSave]);
+
+  // 字幕樣式變動也觸發自動存檔
+  useEffect(() => {
+    if (!loadedRef.current) return;
+    if (justLoadedStyleRef.current === subStyle) return;
+    setSaveState("dirty");
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(doSave, 800);
+    return () => window.clearTimeout(saveTimer.current);
+  }, [subStyle, doSave]);
 
   // 切點:載入既有結果;偵測中每 2 秒輪詢
   useEffect(() => {
@@ -403,6 +455,22 @@ export default function Editor({ projectId }: { projectId: string }) {
       });
       setEditing({ id: merged.id, cursor });
       setSelectedIdx(i - 1);
+    },
+    [setSegments]
+  );
+
+  // 列底的合併箭頭:與下一句合併(選中停在原位)
+  const handleMergeDown = useCallback(
+    (idx: number) => {
+      const prev = segmentsRef.current;
+      if (idx < 0 || idx + 1 >= prev.length) return;
+      const merged = mergeSegments(prev[idx], prev[idx + 1]);
+      setSegments(() => {
+        const next = [...prev];
+        next.splice(idx, 2, merged);
+        return next;
+      });
+      setSelectedIdx(idx);
     },
     [setSegments]
   );
@@ -600,11 +668,33 @@ export default function Editor({ projectId }: { projectId: string }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [undo, redo, seekTo, togglePlay, setSegments, deleteSegment]);
 
+  // 按住 Alt 顯示逐字位置點(preventDefault 防瀏覽器搶去聚焦選單列)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Alt") {
+        e.preventDefault();
+        setShowDots(true);
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "Alt") setShowDots(false);
+    };
+    const onBlur = () => setShowDots(false);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+
   const activeIdx = useMemo(() => activeIndexAt(segments, currentTime), [segments, currentTime]);
 
-  // 播放時讓目前那句自動捲進視野(搜尋過濾中不捲)
+  // 播放時讓目前那句自動捲進視野(搜尋導航中不捲)
   useEffect(() => {
-    if (!isPlaying || editing || activeIdx < 0 || query) return;
+    if (!isPlaying || editing || activeIdx < 0 || query.trim()) return;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     rowRefs.current[activeIdx]?.scrollIntoView({
       block: "nearest",
@@ -612,12 +702,101 @@ export default function Editor({ projectId }: { projectId: string }) {
     });
   }, [activeIdx, isPlaying, editing, query]);
 
-  // 搜尋過濾(保留原始索引,操作照常)
-  const rows = useMemo(() => {
-    const all = segments.map((seg, idx) => ({ seg, idx }));
-    if (!query.trim()) return all;
-    return all.filter((r) => r.seg.text.includes(query.trim()));
-  }, [segments, query]);
+  // 列表永遠顯示全部句子(What'Sub 式:搜尋只導航,不過濾)
+  const rows = useMemo(() => segments.map((seg, idx) => ({ seg, idx })), [segments]);
+
+  // 搜尋:掃出所有符合處(case-sensitive),攤平成 {segIdx, pos}[]
+  const q = query.trim();
+  const matches = useMemo(() => {
+    const result: { segIdx: number; pos: number }[] = [];
+    if (!q) return result;
+    for (let segIdx = 0; segIdx < segments.length; segIdx++) {
+      const text = segments[segIdx].text;
+      let from = 0;
+      while (true) {
+        const pos = text.indexOf(q, from);
+        if (pos < 0) break;
+        result.push({ segIdx, pos });
+        from = pos + q.length;
+      }
+    }
+    return result;
+  }, [segments, q]);
+
+  // matches 變動時 clamp 目前 match index;取代後(followMatchRef)順便導航過去
+  useEffect(() => {
+    if (matches.length === 0) {
+      setMatchIdx(0);
+      followMatchRef.current = false;
+      return;
+    }
+    const clamped = Math.min(Math.max(matchIdxRef.current, 0), matches.length - 1);
+    if (clamped !== matchIdxRef.current) setMatchIdx(clamped);
+    if (followMatchRef.current) {
+      followMatchRef.current = false;
+      const m = matches[clamped];
+      setSelectedIdx(m.segIdx);
+      seekTo(segments[m.segIdx].start);
+      rowRefs.current[m.segIdx]?.scrollIntoView({ block: "center" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matches]);
+
+  const gotoMatch = useCallback(
+    (i: number) => {
+      const m = matches[i];
+      if (!m) return;
+      setMatchIdx(i);
+      setSelectedIdx(m.segIdx);
+      seekTo(segments[m.segIdx].start);
+      rowRefs.current[m.segIdx]?.scrollIntoView({ block: "center" });
+    },
+    [matches, segments, seekTo]
+  );
+
+  const nextMatch = useCallback(() => {
+    if (!matches.length) return;
+    gotoMatch((matchIdxRef.current + 1) % matches.length);
+  }, [matches, gotoMatch]);
+
+  const prevMatch = useCallback(() => {
+    if (!matches.length) return;
+    gotoMatch((matchIdxRef.current - 1 + matches.length) % matches.length);
+  }, [matches, gotoMatch]);
+
+  // 取代目前那一處,取代後跟著跳到下一個(同一 index 的下個 match 自然遞補)
+  const replaceCurrent = useCallback(() => {
+    const m = matches[matchIdxRef.current];
+    if (!m || !q) return;
+    followMatchRef.current = true;
+    setSegments((prev) => {
+      const next = [...prev];
+      const seg = next[m.segIdx];
+      if (!seg) return prev;
+      next[m.segIdx] = {
+        ...seg,
+        text: seg.text.slice(0, m.pos) + replaceValue + seg.text.slice(m.pos + q.length),
+      };
+      return next;
+    });
+  }, [matches, q, replaceValue, setSegments]);
+
+  // 一次取代全部,之後清空目前 match index
+  const replaceAll = useCallback(() => {
+    if (!q) return;
+    setSegments((prev) =>
+      prev.map((s) => (s.text.includes(q) ? { ...s, text: s.text.split(q).join(replaceValue) } : s))
+    );
+    setMatchIdx(0);
+  }, [q, replaceValue, setSegments]);
+
+  const curMatch = matches[matchIdx] ?? null;
+
+  // 字幕樣式:局部更新(拖曳/面板調整共用)
+  const patchStyle = useCallback((patch: Partial<SubStyle>) => {
+    setSubStyleState((prev) => ({ ...prev, ...patch }));
+  }, []);
+
 
   // 資訊列:選中句優先,沒有就用播放中那句
   const statIdx = selectedIdx >= 0 ? selectedIdx : activeIdx;
@@ -719,7 +898,7 @@ export default function Editor({ projectId }: { projectId: string }) {
     // 先把未存的編輯沖掉,燒錄才會拿到最新字幕
     window.clearTimeout(saveTimer.current);
     api
-      .saveSubtitles(projectId, segmentsRef.current, marksRef.current)
+      .saveSubtitles(projectId, segmentsRef.current, marksRef.current, styleRef.current)
       .then(() => {
         setSaveState("saved");
         return api.startBurn(projectId);
@@ -925,6 +1104,13 @@ export default function Editor({ projectId }: { projectId: string }) {
         <button className="btn small" onClick={openDict} title="管理錯字自動取代清單">
           詞庫
         </button>
+        <button
+          className="btn small"
+          onClick={() => setStyleOpen((v) => !v)}
+          title="編輯影片內字幕樣式"
+        >
+          字幕樣式
+        </button>
         {llmAvailable &&
           (fixJob?.status === "running" ? (
             <button className="btn small" onClick={cancelFix} title="點擊取消">
@@ -961,6 +1147,7 @@ export default function Editor({ projectId }: { projectId: string }) {
               onPlay={() => setIsPlaying(true)}
               onPause={() => setIsPlaying(false)}
               onLoadedMetadata={(e) => {
+                setVideoDims({ w: e.currentTarget.videoWidth, h: e.currentTarget.videoHeight });
                 const stored = localStorage.getItem(`vidscribe:safeframe:${projectId}`);
                 setSafeFrame(
                   stored ??
@@ -972,7 +1159,14 @@ export default function Editor({ projectId }: { projectId: string }) {
               }}
             />
             <SafeFrame videoRef={videoRef} frameKey={safeFrame} />
-            {activeText && <div className="subtitle-overlay">{activeText}</div>}
+            <SubtitleOverlay
+              videoRef={videoRef}
+              style={subStyle}
+              text={activeText}
+              open={styleOpen}
+              onOpen={() => setStyleOpen(true)}
+              onChange={patchStyle}
+            />
           </div>
           <div className="player-controls">
             <label className="wave-zoom-label" htmlFor="safeframe-select">
@@ -995,6 +1189,16 @@ export default function Editor({ projectId }: { projectId: string }) {
             </select>
             <span className="hint">紅色斜紋是平台 UI 會遮住的區域,字幕壓到就該換行</span>
           </div>
+          {styleOpen && (
+            <StylePanel
+              style={subStyle}
+              videoW={videoDims.w}
+              videoH={videoDims.h}
+              onChange={patchStyle}
+              onReset={() => setSubStyleState({ ...DEFAULT_STYLE })}
+              onClose={() => setStyleOpen(false)}
+            />
+          )}
         </section>
 
         <section className="subtitle-pane">
@@ -1006,15 +1210,68 @@ export default function Editor({ projectId }: { projectId: string }) {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  nextMatch();
+                }
+              }}
               placeholder="搜尋字幕"
               aria-label="搜尋字幕"
             />
+            {q && (
+              <span className="search-count mono">
+                {matches.length ? matchIdx + 1 : 0}/{matches.length} 處
+              </span>
+            )}
+            {q && (
+              <div className="search-nav">
+                <button
+                  className="icon-btn small"
+                  onClick={prevMatch}
+                  disabled={!matches.length}
+                  title="上一個"
+                  aria-label="上一個"
+                >
+                  ‹
+                </button>
+                <button
+                  className="icon-btn small"
+                  onClick={nextMatch}
+                  disabled={!matches.length}
+                  title="下一個"
+                  aria-label="下一個"
+                >
+                  ›
+                </button>
+              </div>
+            )}
             {query && (
               <button className="link-btn" onClick={() => setQuery("")}>
                 清除
               </button>
             )}
           </div>
+
+          {q && (
+            <div className="replace-row">
+              <span className="replace-arrow" aria-hidden>
+                →
+              </span>
+              <input
+                value={replaceValue}
+                onChange={(e) => setReplaceValue(e.target.value)}
+                placeholder="取代為…"
+                aria-label="取代為"
+              />
+              <button className="btn small" onClick={replaceCurrent} disabled={!matches.length}>
+                取代
+              </button>
+              <button className="btn small" onClick={replaceAll} disabled={!matches.length}>
+                全部
+              </button>
+            </div>
+          )}
 
           <div className="sub-list">
             {segments.length === 0 ? (
@@ -1024,8 +1281,6 @@ export default function Editor({ projectId }: { projectId: string }) {
                   重新辨識
                 </button>
               </div>
-            ) : rows.length === 0 ? (
-              <p className="empty-hint">沒有符合「{query}」的字幕。</p>
             ) : (
               rows.map(({ seg, idx }) => (
                 <Row
@@ -1034,7 +1289,11 @@ export default function Editor({ projectId }: { projectId: string }) {
                   index={idx}
                   isActive={idx === activeIdx}
                   isSelected={idx === selectedIdx}
+                  isLast={idx === segments.length - 1}
                   editingCursor={editing?.id === seg.id ? editing.cursor : null}
+                  query={q}
+                  curPos={curMatch && curMatch.segIdx === idx ? curMatch.pos : -1}
+                  showDots={showDots}
                   rowRef={(el) => (rowRefs.current[idx] = el)}
                   onRowClick={handleRowClick}
                   onStartEdit={handleStartEdit}
@@ -1042,8 +1301,10 @@ export default function Editor({ projectId }: { projectId: string }) {
                   onEsc={handleEsc}
                   onSplit={handleSplit}
                   onMergeUp={handleMergeUp}
+                  onMergeDown={handleMergeDown}
                   onTab={handleTab}
                   onDelete={deleteSegment}
+                  onWordSeek={seekTo}
                 />
               ))
             )}
@@ -1313,7 +1574,11 @@ interface RowProps {
   index: number;
   isActive: boolean;
   isSelected: boolean;
+  isLast: boolean;
   editingCursor: number | null;
+  query: string;
+  curPos: number;
+  showDots: boolean;
   rowRef: (el: HTMLDivElement | null) => void;
   onRowClick: (index: number) => void;
   onStartEdit: (id: string, cursor: number) => void;
@@ -1321,8 +1586,10 @@ interface RowProps {
   onEsc: (id: string, draft: string) => void;
   onSplit: (id: string, draft: string, pos: number) => void;
   onMergeUp: (id: string, draft: string) => void;
+  onMergeDown: (index: number) => void;
   onTab: (id: string, draft: string, dir: 1 | -1) => void;
   onDelete: (index: number) => void;
+  onWordSeek: (t: number) => void;
 }
 
 const Row = memo(function Row({
@@ -1330,7 +1597,11 @@ const Row = memo(function Row({
   index,
   isActive,
   isSelected,
+  isLast,
   editingCursor,
+  query,
+  curPos,
+  showDots,
   rowRef,
   onRowClick,
   onStartEdit,
@@ -1338,11 +1609,14 @@ const Row = memo(function Row({
   onEsc,
   onSplit,
   onMergeUp,
+  onMergeDown,
   onTab,
   onDelete,
+  onWordSeek,
 }: RowProps) {
   const cls =
     "sub-row" + (isActive ? " active" : "") + (isSelected ? " selected" : "");
+  const dur = seg.end - seg.start;
   return (
     <div
       ref={rowRef}
@@ -1356,20 +1630,44 @@ const Row = memo(function Row({
       >
         {formatTime(seg.start)}
       </span>
-      {editingCursor !== null ? (
-        <RowTextarea
-          segId={seg.id}
-          initial={seg.text}
-          cursor={editingCursor}
-          onBlurCommit={onBlurCommit}
-          onEsc={onEsc}
-          onSplit={onSplit}
-          onMergeUp={onMergeUp}
-          onTab={onTab}
-        />
-      ) : (
-        <span className="row-text">{seg.text}</span>
-      )}
+      <div className="row-text-col">
+        {editingCursor !== null ? (
+          <RowTextarea
+            segId={seg.id}
+            initial={seg.text}
+            cursor={editingCursor}
+            onBlurCommit={onBlurCommit}
+            onEsc={onEsc}
+            onSplit={onSplit}
+            onMergeUp={onMergeUp}
+            onTab={onTab}
+          />
+        ) : (
+          <span className="row-text">
+            {query ? renderHighlighted(seg.text, query, curPos) : seg.text}
+          </span>
+        )}
+        {showDots && seg.words && seg.words.length > 0 && dur > 0 && (
+          <div className="word-dots">
+            {seg.words.map((w, i) => {
+              const mid = (w.start + w.end) / 2;
+              const left = Math.min(Math.max(((mid - seg.start) / dur) * 100, 0), 100);
+              return (
+                <span
+                  key={i}
+                  className="dot"
+                  style={{ left: `${left}%` }}
+                  title={w.word}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onWordSeek(w.start);
+                  }}
+                />
+              );
+            })}
+          </div>
+        )}
+      </div>
       <span className="row-count">{seg.text.replace(/\s/g, "").length}</span>
       <button
         className="row-delete"
@@ -1381,6 +1679,35 @@ const Row = memo(function Row({
       >
         ✕
       </button>
+      {!isLast && (
+        <button
+          className="merge-btn"
+          title="與下一句合併"
+          onClick={(e) => {
+            e.stopPropagation();
+            onMergeDown(index);
+          }}
+        >
+          <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden>
+            <path
+              d="M3 3 L8 7 L13 3"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M3 13 L8 9 L13 13"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      )}
     </div>
   );
 });

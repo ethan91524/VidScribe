@@ -35,6 +35,56 @@ export interface Project {
   device: string | null;
 }
 
+export type SubAlign = "left" | "center" | "right";
+export type SubAnim = "none" | "fade";
+
+/** 字幕樣式,鍵名/預設值需與 backend/exporter.py 的 STYLE_DEFAULTS 完全一致。 */
+export interface SubStyle {
+  anim: SubAnim;
+  font: string;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  size: number;
+  spacing: number;
+  color: string;
+  alpha: number;
+  box: boolean;
+  boxColor: string;
+  boxAlpha: number;
+  boxRadius: number;
+  boxPadX: number;
+  boxPadY: number;
+  outline: number;
+  shadow: boolean;
+  x: number;
+  y: number;
+  align: SubAlign;
+}
+
+export const DEFAULT_STYLE: SubStyle = {
+  anim: "none",
+  font: "Microsoft JhengHei",
+  bold: true,
+  italic: false,
+  underline: false,
+  size: 0.055,
+  spacing: 0.0,
+  color: "#FFFFFF",
+  alpha: 1.0,
+  box: false,
+  boxColor: "#080808",
+  boxAlpha: 0.88,
+  boxRadius: 6,
+  boxPadX: 0,
+  boxPadY: 0,
+  outline: 4,
+  shadow: true,
+  x: 0.5,
+  y: 0.9,
+  align: "center",
+};
+
 export interface DictEntry {
   id: string;
   wrong: string;

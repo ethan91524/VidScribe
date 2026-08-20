@@ -148,7 +148,12 @@ def put_subtitles(pid: str, body: dict = Body(...)):
     marks = body.get("marks") or []
     if not (isinstance(marks, list) and all(isinstance(m, (int, float)) for m in marks)):
         raise HTTPException(400, "marks 必須是數字陣列")
-    storage.save_subtitles(pid, {"version": 1, "segments": segments, "marks": marks})
+    style = body.get("style")
+    if style is not None and not isinstance(style, dict):
+        raise HTTPException(400, "style 必須是物件")
+    storage.save_subtitles(
+        pid, {"version": 1, "segments": segments, "marks": marks, "style": style}
+    )
     return {"ok": True}
 
 

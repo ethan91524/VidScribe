@@ -55,13 +55,66 @@ def _ass_escape(text: str) -> str:
     return text.replace("{", "(").replace("}", ")").replace("\n", "\\N")
 
 
-def to_ass(segments: list[dict], width: int, height: int) -> str:
-    """燒錄用 ASS 字幕:粗正黑、白字黑邊、置底置中,大小按解析度縮放。"""
-    fs = max(round(height * 0.055), 16)
-    outline = max(round(height * 0.004), 2)
-    shadow = max(round(height * 0.002), 1)
-    margin_v = max(round(height * 0.09), 20)
-    margin_lr = max(round(width * 0.06), 20)
+# 字幕樣式預設值,鍵名與前端 types.ts 的 DEFAULT_STYLE 一致。
+# 前端沒存過樣式時燒錄長相 = 原本的白字黑邊置底置中。
+STYLE_DEFAULTS = {
+    "anim": "none",
+    "font": "Microsoft JhengHei",
+    "bold": True,
+    "italic": False,
+    "underline": False,
+    "size": 0.055,       # 字級,佔影片高度比例
+    "spacing": 0.0,      # 字距,佔影片高度比例
+    "color": "#FFFFFF",
+    "alpha": 1.0,
+    "box": False,
+    "boxColor": "#080808",
+    "boxAlpha": 0.88,
+    "boxRadius": 6,      # 圓角只在預覽呈現,libass 不支援
+    "boxPadX": 0,        # 底框額外寬/高,以 1080p 為基準的 px
+    "boxPadY": 0,
+    "outline": 4,        # 描邊粗細(1080p 基準 px);開底框時 ASS 無法同時描邊
+    "shadow": True,
+    "x": 0.5,            # 錨點位置(比例)
+    "y": 0.90,
+    "align": "center",
+}
+
+
+def _ass_color(hex_color: str, alpha: float) -> str:
+    """#RRGGBB + 不透明度(1=不透明) → ASS 的 &HAABBGGRR。"""
+    h = hex_color.lstrip("#")
+    if len(h) != 6:
+        h = "FFFFFF"
+    r, g, b = h[0:2], h[2:4], h[4:6]
+    aa = max(0, min(255, round((1 - alpha) * 255)))
+    return f"&H{aa:02X}{b}{g}{r}".upper()
+
+
+def to_ass(segments: list[dict], width: int, height: int, style: dict | None = None) -> str:
+    """燒錄用 ASS 字幕,吃編輯器的字幕樣式(位置用 \\pos 對齊預覽)。"""
+    st = {**STYLE_DEFAULTS, **(style or {})}
+    scale = height / 1080  # 1080p 基準 px → 實際解析度
+    fs = max(round(float(st["size"]) * height), 8)
+    spacing = round(float(st["spacing"]) * height, 1)
+    primary = _ass_color(st["color"], float(st["alpha"]))
+    if st["box"]:
+        # BorderStyle=3:OutlineColour 就是底框顏色,Outline 是底框留邊
+        border_style = 3
+        outline_color = _ass_color(st["boxColor"], float(st["boxAlpha"]))
+        base_pad = fs * 0.22
+        pad_x = max(round(base_pad + float(st["boxPadX"]) * scale, 1), 0)
+        pad_y = max(round(base_pad * 0.6 + float(st["boxPadY"]) * scale, 1), 0)
+        outline = pad_y  # style 層先填一個,實際用 \xbord \ybord 分開控制
+    else:
+        border_style = 1
+        outline_color = "&H00000000"
+        outline = round(float(st["outline"]) * scale, 1)
+        pad_x = pad_y = None
+    shadow = round(2 * scale, 1) if st["shadow"] else 0
+    margin_lr = max(round(width * 0.04), 16)
+    align_an = {"left": 4, "center": 5, "right": 6}.get(st["align"], 5)
+
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -74,15 +127,24 @@ def to_ass(segments: list[dict], width: int, height: int) -> str:
         "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,Microsoft JhengHei,{fs},&H00FFFFFF,&H00FFFFFF,"
-        f"&H00000000,&H96000000,-1,0,0,0,100,100,0,0,1,{outline},{shadow},"
-        f"2,{margin_lr},{margin_lr},{margin_v},1\n\n"
+        f"Style: Default,{st['font']},{fs},{primary},{primary},"
+        f"{outline_color},&H80000000,{-1 if st['bold'] else 0},"
+        f"{-1 if st['italic'] else 0},{-1 if st['underline'] else 0},0,"
+        f"100,100,{spacing},0,{border_style},{outline},{shadow},"
+        f"{align_an},{margin_lr},{margin_lr},20,1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
+    pos_x = round(float(st["x"]) * width, 1)
+    pos_y = round(float(st["y"]) * height, 1)
+    tags = f"\\an{align_an}\\pos({pos_x},{pos_y})"
+    if st["box"]:
+        tags += f"\\xbord{pad_x}\\ybord{pad_y}"
+    if st["anim"] == "fade":
+        tags += "\\fad(200,0)"
     events = [
         f"Dialogue: 0,{_ass_time(s['start'])},{_ass_time(s['end'])},Default,,0,0,0,,"
-        f"{_ass_escape(s['text'])}"
+        f"{{{tags}}}{_ass_escape(s['text'])}"
         for s in segments
         if s["text"].strip()
     ]

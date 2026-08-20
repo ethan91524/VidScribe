@@ -74,7 +74,8 @@ def start(pid: str) -> dict:
     media = d / meta["media_file"]
     if not media.is_file():
         raise RuntimeError("找不到媒體檔")
-    segments = storage.load_subtitles(pid)["segments"]
+    subs = storage.load_subtitles(pid)
+    segments = subs["segments"]
     if not segments:
         raise RuntimeError("沒有字幕可以燒錄")
     with _lock:
@@ -83,7 +84,9 @@ def start(pid: str) -> dict:
             raise RuntimeError("匯出已在進行中")
 
     width, height = _probe_size(media)
-    (d / "burn.ass").write_text(exporter.to_ass(segments, width, height), encoding="utf-8")
+    (d / "burn.ass").write_text(
+        exporter.to_ass(segments, width, height, subs.get("style")), encoding="utf-8"
+    )
 
     job = {"status": "running", "progress": 0.0, "error": None, "cancel": False, "proc": None}
     with _lock:

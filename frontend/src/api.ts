@@ -1,4 +1,4 @@
-import type { BurnJob, DictEntry, FixJob, Project, Segment } from "./types";
+import type { BurnJob, DictEntry, FixJob, Project, Segment, SubStyle } from "./types";
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -29,14 +29,14 @@ export const api = {
 
   getSubtitles: (id: string) =>
     fetch(`/api/projects/${id}/subtitles`).then((r) =>
-      json<{ version: number; segments: Segment[]; marks?: number[] }>(r)
+      json<{ version: number; segments: Segment[]; marks?: number[]; style?: SubStyle | null }>(r)
     ),
 
-  saveSubtitles: (id: string, segments: Segment[], marks: number[]) =>
+  saveSubtitles: (id: string, segments: Segment[], marks: number[], style: SubStyle) =>
     fetch(`/api/projects/${id}/subtitles`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ segments, marks }),
+      body: JSON.stringify({ segments, marks, style }),
     }).then((r) => json<{ ok: boolean }>(r)),
 
   getCuts: (id: string) =>

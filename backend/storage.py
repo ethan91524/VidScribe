@@ -96,6 +96,7 @@ def delete_project(pid: str) -> None:
 def load_subtitles(pid: str) -> dict:
     data = _load_json(project_dir(pid) / "subtitles.json", {"version": 1, "segments": []})
     data.setdefault("marks", [])
+    data.setdefault("style", None)
     return data
 
 
