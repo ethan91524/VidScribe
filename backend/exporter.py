@@ -143,6 +143,35 @@ def _locate_word_events(s: dict, tags: str, primary_inline: str, highlight_inlin
     return events
 
 
+# 數值欄位的合法範圍,與前端 types.ts 的 STYLE_RANGE 一致。
+_STYLE_RANGE = {
+    "weight": (400, 900), "size": (0.02, 0.2), "lineHeight": (1, 2),
+    "spacing": (0, 0.05), "alpha": (0, 1), "boxAlpha": (0, 1),
+    "boxRadius": (0, 0.06), "padX": (0, 0.12), "padY": (0, 0.08),
+    "maxWidth": (0.3, 0.96), "outline": (0, 0.012), "x": (0.02, 0.98), "y": (0.02, 0.98),
+}
+
+
+def _sanitize_style(style: dict | None) -> dict:
+    """補預設值、換算舊單位、夾住範圍。
+
+    舊版存檔的 outline/boxRadius 是「1080p 基準 px」(例如 outline=4),
+    新版是比例;直接拿來乘畫面高度會變成 4 倍畫面高的描邊,字幕整個爆掉。
+    前端 migrateStyle 做同樣的事,這裡是給直接吃舊 JSON 的燒錄流程兜底。
+    """
+    st = {**STYLE_DEFAULTS, **(style or {})}
+    if "weight" not in (style or {}) and isinstance((style or {}).get("bold"), bool):
+        st["weight"] = 700 if style["bold"] else 400
+    for key, base in (("outline", 1080.0), ("boxRadius", 1080.0)):
+        v = st.get(key)
+        if isinstance(v, (int, float)) and v > _STYLE_RANGE[key][1]:
+            st[key] = v / base
+    for key, (lo, hi) in _STYLE_RANGE.items():
+        v = st.get(key)
+        st[key] = STYLE_DEFAULTS[key] if not isinstance(v, (int, float)) else min(max(v, lo), hi)
+    return st
+
+
 def to_ass(segments: list[dict], width: int, height: int, style: dict | None = None) -> str:
     """燒錄用 ASS 字幕,吃編輯器的字幕樣式(位置用 \\pos 對齊預覽)。
 
@@ -152,7 +181,7 @@ def to_ass(segments: list[dict], width: int, height: int, style: dict | None = N
     lineHeight、boxRadius 的圓角視覺效果 ASS/libass 無對應欄位,僅預覽生
     效 [TODO];weight 的 800/900 在 ASS 只有 Bold 二值可用,一律映射為粗體。
     """
-    st = {**STYLE_DEFAULTS, **(style or {})}
+    st = _sanitize_style(style)
     fs = max(round(float(st["size"]) * height), 8)
     spacing = round(float(st["spacing"]) * height, 1)
     primary = _ass_color(st["color"], float(st["alpha"]))

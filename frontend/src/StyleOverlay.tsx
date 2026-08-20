@@ -242,7 +242,11 @@ export function SubtitleOverlay({
           left: `${style.x * 100}%`,
           top: `${style.y * 100}%`,
           transform,
-          maxWidth: `${style.maxWidth * 100}%`,
+          // 絕對定位只給 left 時,寬度是 shrink-to-fit,可用寬度只剩「容器寬 - left」,
+          // 字幕擺中間就只拿得到一半畫面寬而提早換行。明確指定 width 可跳過這個
+          // 規則,再用 px 版 max-width(對整個內容區,而非剩餘空間)控制換行寬度。
+          width: "max-content",
+          maxWidth: `${Math.round(style.maxWidth * rect.width)}px`,
           whiteSpace: "pre-wrap",
           textAlign: style.align,
           fontFamily: cssFontStack(style.font),

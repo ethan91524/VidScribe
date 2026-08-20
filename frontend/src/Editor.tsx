@@ -23,6 +23,7 @@ import SafeFrame, { SAFE_FRAMES, matchPresetByRatio } from "./SafeFrame";
 import { SubtitleOverlay, StylePanel } from "./StyleOverlay";
 import {
   DEFAULT_STYLE,
+  migrateStyle,
   RUNNING_STATUSES,
   statusLabel,
   type BurnJob,
@@ -165,10 +166,10 @@ export default function Editor({ projectId }: { projectId: string }) {
       const m = s.marks ?? [];
       justLoadedMarksRef.current = m;
       setMarks(m);
-      // 與 DEFAULT_STYLE 合併,補齊舊專案存檔缺少的新欄位(也避免這個 ref
-      // 跟共用的 DEFAULT_STYLE 常數同一個參照,不然「還原」按鈕若剛好也還原成
-      // DEFAULT_STYLE,dirty 判斷會誤判成沒變動而漏存)
-      const st = { ...DEFAULT_STYLE, ...(s.style ?? {}) };
+      // migrateStyle 會補齊新欄位、換算舊單位並夾住範圍;它一律回傳新物件,
+      // 所以也不會跟共用的 DEFAULT_STYLE 常數同一個參照(不然「還原」按鈕若
+      // 剛好也還原成 DEFAULT_STYLE,dirty 判斷會誤判成沒變動而漏存)
+      const st = migrateStyle(s.style);
       justLoadedStyleRef.current = st;
       setSubStyleState(st);
     });

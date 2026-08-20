@@ -95,6 +95,68 @@ export const DEFAULT_STYLE: SubStyle = {
   highlightColor: "#C9FF38",
 };
 
+/** 各數值欄位的合法範圍,與面板滑桿一致。載入時一律夾住,
+ *  避免舊存檔或手改的 JSON 讓字幕爆成整片畫面。 */
+const STYLE_RANGE: Record<string, [number, number]> = {
+  weight: [400, 900],
+  size: [0.02, 0.2],
+  lineHeight: [1, 2],
+  spacing: [0, 0.05],
+  alpha: [0, 1],
+  boxAlpha: [0, 1],
+  boxRadius: [0, 0.06],
+  padX: [0, 0.12],
+  padY: [0, 0.08],
+  maxWidth: [0.3, 0.96],
+  outline: [0, 0.012],
+  x: [0.02, 0.98],
+  y: [0.02, 0.98],
+};
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
+
+/**
+ * 把存檔的樣式轉成目前版本的格式。
+ *
+ * 舊版有兩類不相容:bold 布林(→weight)、以及 outline/boxRadius/boxPadX/boxPadY
+ * 當年存的是「1080p 基準 px」,現在是「佔影片高度比例」。單純展開合併會讓
+ * outline:4 被當成 4 倍畫面高度,字幕直接爆掉,所以要換算再夾範圍。
+ */
+export function migrateStyle(raw: unknown): SubStyle {
+  if (!raw || typeof raw !== "object") return { ...DEFAULT_STYLE };
+  const old = raw as Record<string, unknown>;
+  const s: SubStyle = { ...DEFAULT_STYLE, ...(raw as Partial<SubStyle>) };
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+
+  // bold 布林 → weight
+  if (old.weight === undefined && typeof old.bold === "boolean") {
+    s.weight = old.bold ? 700 : 400;
+  }
+  // 舊的 1080p px → 比例(用當年的基準 1080 換算)
+  const outline = num(old.outline);
+  if (outline !== undefined && outline > STYLE_RANGE.outline[1]) s.outline = outline / 1080;
+  const radius = num(old.boxRadius);
+  if (radius !== undefined && radius > STYLE_RANGE.boxRadius[1]) s.boxRadius = radius / 1080;
+  // 舊的 boxPadX/Y 是「在自動內距之上的增量 px」,換算成比例後疊回預設內距
+  if (old.padX === undefined && num(old.boxPadX) !== undefined) {
+    s.padX = DEFAULT_STYLE.padX + (num(old.boxPadX) as number) / 1080;
+  }
+  if (old.padY === undefined && num(old.boxPadY) !== undefined) {
+    s.padY = DEFAULT_STYLE.padY + (num(old.boxPadY) as number) / 1080;
+  }
+
+  for (const [key, [lo, hi]] of Object.entries(STYLE_RANGE)) {
+    const v = num((s as unknown as Record<string, unknown>)[key]);
+    (s as unknown as Record<string, number>)[key] = v === undefined ? DEFAULT_STYLE[key as keyof SubStyle] as number : clamp(v, lo, hi);
+  }
+  if (![400, 700, 800, 900].includes(s.weight)) s.weight = s.weight >= 850 ? 900 : s.weight >= 750 ? 800 : s.weight >= 550 ? 700 : 400;
+  // 丟掉已淘汰的鍵,免得存回去又被下次載入讀到
+  delete (s as unknown as Record<string, unknown>).bold;
+  delete (s as unknown as Record<string, unknown>).boxPadX;
+  delete (s as unknown as Record<string, unknown>).boxPadY;
+  return s;
+}
+
 export interface DictEntry {
   id: string;
   wrong: string;
