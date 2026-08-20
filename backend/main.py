@@ -222,6 +222,22 @@ def add_dict_entry(body: dict = Body(...)):
     return {"entries": entries}
 
 
+@app.post("/api/dictionary/suggest")
+def suggest_dict(body: dict = Body(...)):
+    """使用者改完字後問:這個修正值得寫進詞庫嗎?
+
+    有 Claude Code CLI 就交給它判斷,沒有就退回保守規則(見 llm.suggest_dict_entry)。
+    這裡只做判斷,實際加入仍走 POST /api/dictionary,前端才能提供「撤銷」。
+    """
+    wrong = (body.get("wrong") or "").strip()
+    right = (body.get("right") or "").strip()
+    if not wrong or not right or wrong == right:
+        return {"add": False, "reason": "沒有有效的修正", "by": "rule"}
+    if len(wrong) > 30 or len(right) > 30:
+        return {"add": False, "reason": "修正範圍太長,不適合當詞庫項目", "by": "rule"}
+    return llm.suggest_dict_entry(wrong, right)
+
+
 @app.delete("/api/dictionary/{entry_id}")
 def delete_dict_entry(entry_id: str):
     return {"entries": dictionary.remove(entry_id)}

@@ -257,3 +257,63 @@ def _run(pid: str, cmd: list[str], segments: list[dict], batches: list[list[int]
         traceback.print_exc()
         job["status"] = "error"
         job["error"] = str(e)[:500]
+
+
+# ---- 詞庫建議:使用者改字後,判斷這是不是「值得記起來」的專有名詞修正 ----
+
+_DICT_SCHEMA = (
+    '{"type":"object","properties":{"add":{"type":"boolean"},'
+    '"reason":{"type":"string"}},"required":["add","reason"]}'
+)
+
+_DICT_PROMPT = """你在協助一個字幕編輯器維護「錯字自動取代」詞庫。
+使用者把辨識結果的某段文字改掉了。請判斷這個修正是否值得寫進詞庫
+(寫進去之後,以後每次辨識完都會自動把「錯誤寫法」換成「正確寫法」)。
+
+值得加入 (add=true) 的情況:
+- 人名、頻道名、品牌名、地名等專有名詞被聽錯(例:依利 → 伊森)
+- 該領域的專業術語被聽成同音的一般詞
+- 固定用字偏好(例:妳 → 你)且錯誤寫法夠獨特,不會誤傷其他句子
+
+不值得加入 (add=false) 的情況:
+- 只是修飾語氣、增刪標點、調整語序
+- 錯誤寫法是很常見的一般詞(例:「他」「這個」),全域取代會誤傷別的句子
+- 兩邊意思根本不同,是使用者自己改寫內容,不是辨識錯誤
+
+reason 用繁體中文一句話說明。"""
+
+
+def suggest_dict_entry(wrong: str, right: str) -> dict:
+    """回傳 {"add": bool, "reason": str, "by": "ai"|"rule"}。
+
+    有 Claude Code CLI 就問它;沒有就退回保守規則(只有等長、純中文、
+    2~6 字的修正才建議),避免把「他→她」這種常見字寫進詞庫誤傷全片。
+    """
+    cmd = find_claude()
+    if cmd:
+        try:
+            proc = subprocess.run(
+                cmd + ["-p", "--output-format", "json", "--json-schema", _DICT_SCHEMA,
+                       "--model", MODEL],
+                input=f"{_DICT_PROMPT}\n\n錯誤寫法:{wrong}\n正確寫法:{right}",
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=45,
+            )
+            if proc.returncode == 0:
+                data = json.loads(proc.stdout)
+                out = data.get("structured_output")
+                if not isinstance(out, dict):
+                    text = str(data.get("result", "")).strip().strip("`")
+                    out = json.loads(text.removeprefix("json").strip())
+                return {"add": bool(out.get("add")), "reason": str(out.get("reason", ""))[:120],
+                        "by": "ai"}
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass  # AI 不可用就走規則
+
+    cjk = all("\u4e00" <= c <= "\u9fff" for c in wrong + right)
+    ok = cjk and len(wrong) == len(right) and 2 <= len(wrong) <= 6 and wrong != right
+    return {
+        "add": ok,
+        "reason": "看起來像專有名詞的同音修正" if ok else "不像固定的專有名詞修正",
+        "by": "rule",
+    }

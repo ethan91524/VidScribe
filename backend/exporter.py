@@ -206,6 +206,10 @@ def _build_style_line(name: str, st: dict, width: int, height: int) -> str:
         border_style = 1
         outline_color = _ass_color(st.get("outlineColor", "#000000"), 1.0)
         outline = round(float(st["outline"]) * height, 1)
+    # 預覽端(StyleOverlay.tsx)陰影一律套在文字上;但 ASS 的 Shadow 欄位在
+    # BorderStyle=3(開底框)時是 libass 用來畫「底框本身」的陰影,格式沒有
+    # 「只給文字加陰影、底框不陰影」這個選項——開底框時燒錄成品的陰影會落在
+    # 底框上,與預覽(文字陰影)不同,這是 ASS/libass 的限制,不是程式漏洞。
     shadow = round(0.002 * height) if st["shadow"] else 0
     max_width = float(st.get("maxWidth", 0.86))
     margin_lr = max(round((1 - max_width) / 2 * width), 0)

@@ -2,6 +2,8 @@ export interface Word {
   start: number;
   end: number;
   word: string;
+  /** 辨識信心(0~1)。舊專案沒有這個欄位,缺值就不顯示。 */
+  p?: number;
 }
 
 export interface Segment {
@@ -10,6 +12,8 @@ export interface Segment {
   end: number;
   text: string;
   words?: Word[];
+  /** 整句辨識信心(0~1)。舊專案沒有這個欄位,缺值就不顯示。 */
+  conf?: number;
   /** 單句樣式覆寫,只存有改動的欄位;沒設的欄位跟著全域 SubStyle 走(見 effectiveStyle)。 */
   style?: Partial<SubStyle>;
 }

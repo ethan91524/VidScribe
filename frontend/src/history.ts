@@ -40,5 +40,15 @@ export function useHistoryState<T>(initial: T) {
     setPresent(next);
   }, []);
 
-  return { value: present, set, reset, undo, redo };
+  // past/future 是 ref,不會自己觸發渲染,但每次 set/undo/redo 都會連帶 setPresent
+  // 造成重渲染,所以在渲染當下讀取的長度一定是最新的,不需要額外狀態同步。
+  return {
+    value: present,
+    set,
+    reset,
+    undo,
+    redo,
+    canUndo: past.current.length > 0,
+    canRedo: future.current.length > 0,
+  };
 }

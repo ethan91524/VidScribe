@@ -191,7 +191,6 @@ export function SubtitleOverlay({
   let padTB = 0;
   let webkitStroke: string | undefined;
   let textShadow: string | undefined;
-  let boxShadow: string | undefined;
   const shadowOffset = 2 * s1080 * k;
 
   if (style.box) {
@@ -199,16 +198,12 @@ export function SubtitleOverlay({
     borderRadius = style.boxRadius * rect.height;
     padLR = Math.max(style.padX * rect.height, 0);
     padTB = Math.max(style.padY * rect.height, 0);
-    if (style.shadow) {
-      boxShadow = `${shadowOffset}px ${shadowOffset}px ${shadowOffset * 2}px rgba(0,0,0,.5)`;
-    }
-  } else {
-    if (style.outline > 0) {
-      webkitStroke = `${style.outline * rect.height}px ${style.outlineColor}`;
-    }
-    if (style.shadow) {
-      textShadow = `0 0 ${shadowOffset * 2}px rgba(0,0,0,.6), ${shadowOffset}px ${shadowOffset}px ${shadowOffset}px rgba(0,0,0,.55)`;
-    }
+  } else if (style.outline > 0) {
+    webkitStroke = `${style.outline * rect.height}px ${style.outlineColor}`;
+  }
+  // 陰影一律套在文字上(不論有沒有底框),不再有 boxShadow。
+  if (style.shadow) {
+    textShadow = `0 0 ${shadowOffset * 2}px rgba(0,0,0,.6), ${shadowOffset}px ${shadowOffset}px ${shadowOffset}px rgba(0,0,0,.55)`;
   }
 
   let transform = "translate(-50%, -50%)";
@@ -281,7 +276,6 @@ export function SubtitleOverlay({
           WebkitTextStroke: webkitStroke,
           paintOrder: webkitStroke ? "stroke" : undefined,
           textShadow,
-          boxShadow,
         }}
         onPointerDown={(e) => beginDrag(e, "move")}
       >
@@ -388,6 +382,31 @@ export function StylePanel({
   const vh = videoH || 1080;
   // scope="one" 但沒有選取句子:整組控制項鎖住,提示先點一句字幕
   const locked = scope === "one" && selectedText === null;
+  // 左右內距/上下內距的鎖定連動:純 UI 狀態,不存進 SubStyle
+  const [padLocked, setPadLocked] = useState(false);
+  const handlePadXChange = (v: number) => {
+    if (!padLocked) {
+      onChange({ padX: v });
+      return;
+    }
+    // 依目前兩者的比例同步變化;基準值是 0 時比例無意義,改成等值變化
+    if (style.padX > 0) {
+      onChange({ padX: v, padY: clamp((style.padY * v) / style.padX, 0, 0.08) });
+    } else {
+      onChange({ padX: v, padY: clamp(v, 0, 0.08) });
+    }
+  };
+  const handlePadYChange = (v: number) => {
+    if (!padLocked) {
+      onChange({ padY: v });
+      return;
+    }
+    if (style.padY > 0) {
+      onChange({ padY: v, padX: clamp((style.padX * v) / style.padY, 0, 0.12) });
+    } else {
+      onChange({ padY: v, padX: clamp(v, 0, 0.12) });
+    }
+  };
   return (
     <div className="style-panel" role="dialog" aria-label="字幕樣式">
       <div className="style-scope-toggle">
@@ -558,16 +577,24 @@ export function StylePanel({
             max={0.12}
             step={0.001}
             value={style.padX}
-            onChange={(v) => onChange({ padX: v })}
+            onChange={handlePadXChange}
             display={`${(style.padX * vh).toFixed(0)}px`}
           />
+          <label className="style-checkbox pad-lock-checkbox" title="鎖定:拖曳任一滑桿,依目前比例同步變化另一個">
+            <input
+              type="checkbox"
+              checked={padLocked}
+              onChange={(e) => setPadLocked(e.target.checked)}
+            />
+            🔒 內距連動
+          </label>
           <RangeRow
             label="上下內距"
             min={0}
             max={0.08}
             step={0.001}
             value={style.padY}
-            onChange={(v) => onChange({ padY: v })}
+            onChange={handlePadYChange}
             display={`${(style.padY * vh).toFixed(0)}px`}
           />
           <p className="style-hint">圓角只影響預覽,燒錄成品為直角</p>

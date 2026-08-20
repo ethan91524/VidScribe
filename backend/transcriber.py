@@ -2,6 +2,7 @@ import json
 import subprocess
 import threading
 import traceback
+import math
 import uuid
 
 from . import config, storage
@@ -169,8 +170,10 @@ def _transcribe(meta: dict, audio, duration: float) -> list[dict]:
         text = s.text.strip()
         if not text:
             continue
+        # p = 該字的辨識信心(0~1),供編輯器標出最沒把握的字
         words = [
-            {"start": round(w.start, 3), "end": round(w.end, 3), "word": w.word}
+            {"start": round(w.start, 3), "end": round(w.end, 3), "word": w.word,
+             "p": round(float(w.probability), 3)}
             for w in (s.words or [])
         ]
         # 句子邊界收緊到實際發音的第一個字/最後一個字:VAD 補值與模型的
@@ -183,12 +186,15 @@ def _transcribe(meta: dict, audio, duration: float) -> list[dict]:
                 start = w0
             if start < w1 <= end:
                 end = w1
+        # 整句信心:avg_logprob 是每 token 的平均對數機率,取 exp 還原成 0~1
+        conf = round(min(math.exp(s.avg_logprob), 1.0), 3) if s.avg_logprob is not None else None
         segments.append({
             "id": uuid.uuid4().hex[:8],
             "start": start,
             "end": end,
             "text": text,
             "words": words,
+            "conf": conf,
         })
         if duration > 0:
             meta["progress"] = min(round(s.end / duration, 3), 0.99)

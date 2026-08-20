@@ -43,10 +43,12 @@ interface DragState {
   startX: number;
   moved: boolean;
   cur: { start: number; end: number };
+  /** 目前游標的 clientX,給拖曳浮動提示定位用 */
+  pointerX: number;
 }
 
 function rulerStep(pps: number): number {
-  if (pps >= 160) return 1;
+  if (pps >= 160) return 0.5;
   if (pps >= 70) return 2;
   if (pps >= 35) return 5;
   if (pps >= 18) return 10;
@@ -166,8 +168,7 @@ export default function Waveform({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    // 尺標
-    ctx.fillStyle = "#898f97";
+    // 尺標:主刻度(長線+文字) + 次刻度(主刻度 5 等分,短線不寫字)
     ctx.strokeStyle = "#e4e4de";
     ctx.font = "10.5px Cascadia Mono, Consolas, monospace";
     ctx.textBaseline = "top";
@@ -176,11 +177,23 @@ export default function Waveform({
     ctx.lineTo(w, RULER_H - 0.5);
     ctx.stroke();
     const step = rulerStep(pps);
-    const t0 = Math.floor(scrollLeft / pps / step) * step;
-    for (let t = t0; t * pps < scrollLeft + w; t += step) {
+    const MINOR_DIV = 5;
+    const minorStep = step / MINOR_DIV;
+    const i0 = Math.floor(scrollLeft / pps / minorStep);
+    const iEnd = Math.ceil((scrollLeft + w) / pps / minorStep);
+    for (let i = i0; i <= iEnd; i++) {
+      const t = i * minorStep;
       const x = t * pps - scrollLeft;
-      ctx.fillRect(x, RULER_H - 6, 1, 6);
-      ctx.fillText(formatTime(t).replace(/\.\d$/, ""), x + 4, 4);
+      if (i % MINOR_DIV === 0) {
+        ctx.fillStyle = "#898f97";
+        ctx.fillRect(x, RULER_H - 6, 1, 6);
+        // 高縮放時 step 帶小數(0.5 秒),文字要保留一位小數才對得準
+        const label = step < 1 ? formatTime(t) : formatTime(t).replace(/\.\d$/, "");
+        ctx.fillText(label, x + 4, 4);
+      } else {
+        ctx.fillStyle = "#e4e4de";
+        ctx.fillRect(x, RULER_H - 3, 1, 3);
+      }
     }
 
     // 波形(以播放位置分色)
@@ -272,6 +285,7 @@ export default function Waveform({
         ...d,
         moved: d.moved || Math.abs(clientX - d.startX) > 3,
         cur: { start, end },
+        pointerX: clientX,
       };
     },
     [pps, duration, segments, cuts, marks]
@@ -291,6 +305,7 @@ export default function Waveform({
         startX: e.clientX,
         moved: false,
         cur: { start: seg.start, end: seg.end },
+        pointerX: e.clientX,
       };
       dragRef.current = d;
       setDrag(d);
@@ -395,6 +410,19 @@ export default function Waveform({
     [timeAt, onAddMark]
   );
 
+  // 拖曳中的浮動提示:邊界時間 + 與原本相差多少 ms。move/l 顯示 start 的位移,r 顯示 end 的。
+  const dragTip = drag
+    ? (() => {
+        const isEnd = drag.type === "r";
+        const boundary = isEnd ? drag.cur.end : drag.cur.start;
+        const orig = isEnd ? drag.origEnd : drag.origStart;
+        const deltaMs = Math.round((boundary - orig) * 1000);
+        const sign = deltaMs > 0 ? "+" : deltaMs < 0 ? "−" : "";
+        return { time: formatTimeMs(boundary), deltaText: `${sign}${Math.abs(deltaMs)}ms` };
+      })()
+    : null;
+  const dragTipTop = innerRef.current ? innerRef.current.getBoundingClientRect().top + 18 : 0;
+
   const innerW = Math.max(duration * pps, viewW);
   const sel =
     selectedIdx >= 0 && selectedIdx < segments.length
@@ -482,6 +510,12 @@ export default function Waveform({
           <div className="wave-playhead" style={{ left: currentTime * pps }} />
         </div>
       </div>
+      {drag && dragTip && (
+        <div className="drag-tip" style={{ left: drag.pointerX, top: dragTipTop }}>
+          <span className="mono">{dragTip.time}</span>
+          <span className="drag-tip-delta">{dragTip.deltaText}</span>
+        </div>
+      )}
       <div className="wave-footer" ref={footerRef}>
         <span className="wave-seg-info">
           {sel ? (

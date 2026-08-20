@@ -64,6 +64,14 @@ export const api = {
       json<{ entries: DictEntry[] }>(r)
     ),
 
+  /** 改詞後問要不要把這組「錯誤→正確」加進詞庫;有 Claude Code CLI 就交給它判斷,沒有就退回保守規則。 */
+  suggestDictEntry: (wrong: string, right: string) =>
+    fetch("/api/dictionary/suggest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wrong, right }),
+    }).then((r) => json<{ add: boolean; reason: string; by: "ai" | "rule" }>(r)),
+
   getLlmStatus: () =>
     fetch("/api/llm/status").then((r) => json<{ available: boolean }>(r)),
 

@@ -34,6 +34,7 @@ import {
   type Project,
   type Segment,
   type SubStyle,
+  type Word,
 } from "./types";
 import Waveform from "./Waveform";
 
@@ -52,6 +53,8 @@ const EXPORT_FORMATS = [
   { format: "txt", label: "逐字稿(純文字)" },
   { format: "txt-ts", label: "逐字稿(含時間)" },
 ];
+
+const PLAYBACK_RATES = [0.25, 0.5, 1, 1.5, 2];
 
 const HOTKEYS: [string, string][] = [
   ["Enter", "在游標處斷句"],
@@ -138,7 +141,14 @@ export default function Editor({ projectId }: { projectId: string }) {
   const history = useHistoryState<Segment[]>([]);
   const segments = history.value;
   // 這些函式引用是穩定的,拿出來當 dependency 用
-  const { set: setSegments, reset: resetSegments, undo: undoHistory, redo: redoHistory } = history;
+  const {
+    set: setSegments,
+    reset: resetSegments,
+    undo: undoHistory,
+    redo: redoHistory,
+    canUndo,
+    canRedo,
+  } = history;
   const segmentsRef = useRef(segments);
   segmentsRef.current = segments;
 
@@ -193,6 +203,15 @@ export default function Editor({ projectId }: { projectId: string }) {
   const [dictWrong, setDictWrong] = useState("");
   const [dictRight, setDictRight] = useState("");
   const [dictMsg, setDictMsg] = useState("");
+
+  // 改詞後詢問是否加入詞庫:同一組 wrong/right 這次 session 只問一次
+  const askedDictRef = useRef<Set<string>>(new Set());
+  const [dictToast, setDictToast] = useState<{ id: string; wrong: string; right: string } | null>(
+    null
+  );
+  const dictToastTimerRef = useRef<number | undefined>(undefined);
+
+  const [playbackRate, setPlaybackRate] = useState(1);
 
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -557,19 +576,74 @@ export default function Editor({ projectId }: { projectId: string }) {
     [setSegments]
   );
 
+  // ---- 改詞後詢問是否加入詞庫(含可撤銷的 toast) ----
+
+  const showDictToast = useCallback((entryId: string, wrong: string, right: string) => {
+    window.clearTimeout(dictToastTimerRef.current);
+    setDictToast({ id: entryId, wrong, right });
+    dictToastTimerRef.current = window.setTimeout(() => setDictToast(null), 6000);
+  }, []);
+
+  const undoDictToast = useCallback(() => {
+    setDictToast((cur) => {
+      if (cur) {
+        window.clearTimeout(dictToastTimerRef.current);
+        api.deleteDictEntry(cur.id).catch(() => {});
+      }
+      return null;
+    });
+  }, []);
+
+  useEffect(() => () => window.clearTimeout(dictToastTimerRef.current), []);
+
+  // 純標點/空白差異不算真正的錯字修正,跳過
+  const isPunctOrSpace = (s: string) => !/[^\s\p{P}]/u.test(s);
+
+  // 比對改前改後的最小差異(共同前綴/後綴中間那段),問後端要不要收進詞庫;
+  // 非同步進行、失敗安靜略過,絕不擋住編輯。
+  const suggestDictFromEdit = useCallback(
+    (oldText: string, newText: string) => {
+      const d = diffParts(oldText, newText);
+      const wrong = d.aMid;
+      const right = d.bMid;
+      if (!wrong || !right) return;
+      if (wrong.length > 30 || right.length > 30) return;
+      if (isPunctOrSpace(wrong) || isPunctOrSpace(right)) return;
+      const key = `${wrong} ${right}`;
+      if (askedDictRef.current.has(key)) return;
+      askedDictRef.current.add(key);
+      api
+        .suggestDictEntry(wrong, right)
+        .then((res) => {
+          if (!res.add) return null;
+          return api.addDictEntry(wrong, right).then((d2) => {
+            const entry = d2.entries.find((e) => e.wrong === wrong);
+            if (entry) showDictToast(entry.id, wrong, right);
+          });
+        })
+        .catch((err) => console.warn("詞庫建議失敗,略過", err));
+    },
+    [showDictToast]
+  );
+
   // ---- 編輯操作 ----
 
   const commitText = useCallback(
     (id: string, draft: string) => {
+      const prevList = segmentsRef.current;
+      const i = prevList.findIndex((s) => s.id === id);
+      if (i < 0 || prevList[i].text === draft) return;
+      const oldText = prevList[i].text;
       setSegments((prev) => {
-        const i = prev.findIndex((s) => s.id === id);
-        if (i < 0 || prev[i].text === draft) return prev;
+        const j = prev.findIndex((s) => s.id === id);
+        if (j < 0 || prev[j].text === draft) return prev;
         const next = [...prev];
-        next[i] = { ...next[i], text: draft };
+        next[j] = { ...next[j], text: draft };
         return next;
       });
+      suggestDictFromEdit(oldText, draft);
     },
-    [setSegments]
+    [setSegments, suggestDictFromEdit]
   );
 
   const handleBlur = useCallback(
@@ -750,6 +824,18 @@ export default function Editor({ projectId }: { projectId: string }) {
     if (v.paused) v.play();
     else v.pause();
   }, []);
+
+  // 播放速度:點擊工具列按鈕循環切換,套用到 video 元素
+  const cyclePlaybackRate = useCallback(() => {
+    setPlaybackRate((prev) => {
+      const i = PLAYBACK_RATES.indexOf(prev);
+      return PLAYBACK_RATES[(i + 1) % PLAYBACK_RATES.length];
+    });
+  }, []);
+
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.playbackRate = playbackRate;
+  }, [playbackRate]);
 
   const undo = useCallback(() => {
     setEditing(null);
@@ -1253,6 +1339,7 @@ export default function Editor({ projectId }: { projectId: string }) {
         onBurn={startBurn}
       />
 
+      <div className="page-body">
       <div className="wave-resizable" style={{ height: waveHeight }}>
         {peaks && project.duration ? (
           <Waveform
@@ -1311,14 +1398,54 @@ export default function Editor({ projectId }: { projectId: string }) {
             {project.duration ? formatTime(project.duration) : "--:--"}
           </span>
         </span>
+        <button
+          className="btn small speed-btn mono"
+          onClick={cyclePlaybackRate}
+          title="播放速度(點擊切換)"
+        >
+          {playbackRate}×
+        </button>
         <span className="toolbar-sep" aria-hidden />
-        <button className="icon-btn" onClick={undo} title="復原 (Ctrl+Z)">
-          ↺
+        <button className="icon-btn" onClick={undo} disabled={!canUndo} title="復原 (Ctrl+Z)">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
+            <path
+              d="M4.5 3.3 1.8 6l2.7 2.7"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M1.8 6h6.7a4 4 0 1 1 0 8H7.2"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </button>
-        <button className="icon-btn" onClick={redo} title="重做 (Ctrl+Y)">
-          ↻
+        <button className="icon-btn" onClick={redo} disabled={!canRedo} title="重做 (Ctrl+Y)">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
+            <path
+              d="M11.5 3.3 14.2 6l-2.7 2.7"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M14.2 6H7.5a4 4 0 1 0 0 8h1.3"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </button>
-        <span className="toolbar-spacer" />
         <button
           className="btn small"
           onClick={() => setVideoCollapsed((v) => !v)}
@@ -1402,7 +1529,7 @@ export default function Editor({ projectId }: { projectId: string }) {
       <main
         className="editor"
         ref={editorRef}
-        style={{ gridTemplateColumns: videoCollapsed ? "1fr" : `${leftPct}% 6px 1fr` }}
+        style={{ gridTemplateColumns: videoCollapsed ? "1fr" : `${leftPct}% 8px 1fr` }}
       >
         {/* 收合影片用 display:none 而非不 render,video 元素才不會被卸載重載,
             播放進度/暫停狀態才能在展開回來時保留。 */}
@@ -1608,10 +1735,35 @@ export default function Editor({ projectId }: { projectId: string }) {
                   與前句間隔 {(statSeg.start - segments[statIdx - 1].end).toFixed(2)} 秒
                 </span>
               )}
+              {typeof statSeg.conf === "number" && (
+                <span className={statSeg.conf < 0.6 ? "stat-danger" : undefined}>
+                  信心 {Math.round(statSeg.conf * 100)}%
+                </span>
+              )}
+              {(() => {
+                const words = statSeg.words;
+                if (!words?.length) return null;
+                let worst: Word | null = null;
+                for (const w of words) {
+                  if (typeof w.p !== "number") continue;
+                  if (worst === null || worst.p === undefined || w.p < worst.p) worst = w;
+                }
+                if (!worst || typeof worst.p !== "number") return null;
+                return (
+                  <button
+                    className={"stat-word-btn" + (worst!.p! < 0.6 ? " stat-danger" : "")}
+                    onClick={() => seekTo(worst!.start)}
+                    title="跳到這個字的時間"
+                  >
+                    信心 {worst!.word} {Math.round(worst!.p! * 100)}%
+                  </button>
+                );
+              })()}
             </div>
           )}
         </section>
       </main>
+      </div>
 
       {dictOpen && (
         <div className="fix-panel" role="dialog" aria-label="詞庫">
@@ -1787,6 +1939,16 @@ export default function Editor({ projectId }: { projectId: string }) {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {dictToast && (
+        <div className="dict-toast" key={dictToast.id} role="status">
+          <span className="dict-toast-text">「{dictToast.right}」加進我的詞庫了</span>
+          <button className="dict-toast-undo" onClick={undoDictToast}>
+            撤銷
+          </button>
+          <span className="dict-toast-progress" />
         </div>
       )}
     </div>
