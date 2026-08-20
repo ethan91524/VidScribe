@@ -36,53 +36,63 @@ export interface Project {
 }
 
 export type SubAlign = "left" | "center" | "right";
-export type SubAnim = "none" | "fade";
+export type SubAnim = "none" | "fade" | "pop";
 
 /** 字幕樣式,鍵名/預設值需與 backend/exporter.py 的 STYLE_DEFAULTS 完全一致。 */
 export interface SubStyle {
   anim: SubAnim;
   font: string;
-  bold: boolean;
+  weight: number; // 400/700/800/900,取代原本的 bold 布林
   italic: boolean;
   underline: boolean;
   size: number;
+  lineHeight: number;
   spacing: number;
   color: string;
   alpha: number;
   box: boolean;
   boxColor: string;
   boxAlpha: number;
-  boxRadius: number;
-  boxPadX: number;
-  boxPadY: number;
+  boxRadius: number; // 佔影片高度比例
+  padX: number; // 佔影片高度比例,取代原本的 boxPadX(px)
+  padY: number; // 佔影片高度比例,取代原本的 boxPadY(px)
+  maxWidth: number; // 佔影片寬度比例
   outline: number;
+  outlineColor: string;
   shadow: boolean;
   x: number;
   y: number;
   align: SubAlign;
+  highlight: boolean; // 逐字高亮開關
+  highlightColor: string;
 }
 
 export const DEFAULT_STYLE: SubStyle = {
   anim: "none",
   font: "Microsoft JhengHei",
-  bold: true,
+  weight: 800,
   italic: false,
   underline: false,
-  size: 0.055,
+  size: 0.0909,
+  lineHeight: 1.25,
   spacing: 0.0,
   color: "#FFFFFF",
   alpha: 1.0,
-  box: false,
-  boxColor: "#080808",
-  boxAlpha: 0.88,
-  boxRadius: 6,
-  boxPadX: 0,
-  boxPadY: 0,
-  outline: 4,
-  shadow: true,
+  box: true,
+  boxColor: "#111111",
+  boxAlpha: 0.78,
+  boxRadius: 0.0214,
+  padX: 0.0374,
+  padY: 0.0187,
+  maxWidth: 0.86,
+  outline: 0,
+  outlineColor: "#000000",
+  shadow: false,
   x: 0.5,
-  y: 0.9,
+  y: 0.84,
   align: "center",
+  highlight: false,
+  highlightColor: "#C9FF38",
 };
 
 export interface DictEntry {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { SubStyle } from "./types";
+import type { SubStyle, Word } from "./types";
 
 /** 字型下拉選項:label 給人看,ass 存進 style.font(燒錄用),css 是預覽用的字型堆疊。 */
 export const FONT_OPTIONS: { label: string; ass: string; css: string }[] = [
@@ -16,6 +16,37 @@ function cssFontStack(ass: string): string {
 
 function fontLabel(ass: string): string {
   return FONT_OPTIONS.find((f) => f.ass === ass)?.label ?? ass;
+}
+
+/**
+ * 逐字高亮渲染:依 words 的 [start,end) 定位目前字,包成單獨 span 上色。
+ * 定位失敗(文字被改過對不上)就退回整句一般渲染。
+ */
+function renderHighlightedText(
+  text: string,
+  words: Word[],
+  currentTime: number,
+  normalColor: string,
+  highlightColor: string
+): React.ReactNode {
+  let searchFrom = 0;
+  const nodes: React.ReactNode[] = [];
+  for (let i = 0; i < words.length; i++) {
+    const token = words[i].word.trim();
+    if (!token) continue;
+    const idx = text.indexOf(token, searchFrom);
+    if (idx < 0) return text;
+    if (idx > searchFrom) nodes.push(text.slice(searchFrom, idx));
+    const active = currentTime >= words[i].start && currentTime < words[i].end;
+    nodes.push(
+      <span key={i} style={{ color: active ? highlightColor : normalColor }}>
+        {text.slice(idx, idx + token.length)}
+      </span>
+    );
+    searchFrom = idx + token.length;
+  }
+  nodes.push(text.slice(searchFrom));
+  return nodes;
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -98,13 +129,24 @@ interface SubtitleOverlayProps {
   videoRef: React.RefObject<HTMLVideoElement>;
   style: SubStyle;
   text: string;
+  words?: Word[];
+  currentTime: number;
   open: boolean;
   onOpen: () => void;
   onChange: (patch: Partial<SubStyle>) => void;
 }
 
 /** 疊在影片內容區上的字幕預覽,可直接拖曳改位置/大小,點一下開設定面板。 */
-export function SubtitleOverlay({ videoRef, style, text, open, onOpen, onChange }: SubtitleOverlayProps) {
+export function SubtitleOverlay({
+  videoRef,
+  style,
+  text,
+  words,
+  currentTime,
+  open,
+  onOpen,
+  onChange,
+}: SubtitleOverlayProps) {
   const { rect, videoW, videoH } = useVideoContentRect(videoRef);
 
   if (!rect) return null;
@@ -114,11 +156,16 @@ export function SubtitleOverlay({ videoRef, style, text, open, onOpen, onChange 
   const vh = videoH || 1080;
   const k = rect.height / vh; // 來源解析度 px → 預覽 px
   const s1080 = vh / 1080;
-  const fs = style.size * vh; // 來源解析度字級(對齊後端燒錄用的基準)
 
   const fontSize = style.size * rect.height;
   const letterSpacing = style.spacing * rect.height;
   const color = hexToRgba(style.color, style.alpha);
+  const highlightColor = hexToRgba(style.highlightColor, style.alpha);
+
+  const content =
+    style.highlight && text && words && words.length > 0
+      ? renderHighlightedText(text, words, currentTime, color, highlightColor)
+      : displayText;
 
   let background = "transparent";
   let borderRadius = 0;
@@ -131,15 +178,15 @@ export function SubtitleOverlay({ videoRef, style, text, open, onOpen, onChange 
 
   if (style.box) {
     background = hexToRgba(style.boxColor, style.boxAlpha);
-    borderRadius = style.boxRadius * s1080 * k;
-    padLR = Math.max(fs * 0.22 + style.boxPadX * s1080, 0) * k;
-    padTB = Math.max(fs * 0.132 + style.boxPadY * s1080, 0) * k;
+    borderRadius = style.boxRadius * rect.height;
+    padLR = Math.max(style.padX * rect.height, 0);
+    padTB = Math.max(style.padY * rect.height, 0);
     if (style.shadow) {
       boxShadow = `${shadowOffset}px ${shadowOffset}px ${shadowOffset * 2}px rgba(0,0,0,.5)`;
     }
   } else {
     if (style.outline > 0) {
-      webkitStroke = `${style.outline * s1080 * k}px black`;
+      webkitStroke = `${style.outline * rect.height}px ${style.outlineColor}`;
     }
     if (style.shadow) {
       textShadow = `0 0 ${shadowOffset * 2}px rgba(0,0,0,.6), ${shadowOffset}px ${shadowOffset}px ${shadowOffset}px rgba(0,0,0,.55)`;
@@ -195,14 +242,15 @@ export function SubtitleOverlay({ videoRef, style, text, open, onOpen, onChange 
           left: `${style.x * 100}%`,
           top: `${style.y * 100}%`,
           transform,
-          maxWidth: "92%",
+          maxWidth: `${style.maxWidth * 100}%`,
           whiteSpace: "pre-wrap",
           textAlign: style.align,
           fontFamily: cssFontStack(style.font),
           fontSize,
+          lineHeight: style.lineHeight,
           letterSpacing,
           color,
-          fontWeight: style.bold ? 700 : 400,
+          fontWeight: style.weight,
           fontStyle: style.italic ? "italic" : "normal",
           textDecoration: style.underline ? "underline" : "none",
           background,
@@ -215,7 +263,13 @@ export function SubtitleOverlay({ videoRef, style, text, open, onOpen, onChange 
         }}
         onPointerDown={(e) => beginDrag(e, "move")}
       >
-        {displayText}
+        <span
+          key={style.anim === "pop" ? text : undefined}
+          className={style.anim === "pop" ? "subtitle-pop-inner" : undefined}
+          style={{ display: "inline-block" }}
+        >
+          {content}
+        </span>
         {open && (
           <>
             <div
@@ -307,6 +361,7 @@ export function StylePanel({ style, videoW, videoH, onChange, onReset, onClose }
         >
           <option value="none">無</option>
           <option value="fade">淡入</option>
+          <option value="pop">彈出</option>
         </select>
       </div>
 
@@ -321,11 +376,13 @@ export function StylePanel({ style, videoW, videoH, onChange, onReset, onClose }
         </select>
         <select
           className="select"
-          value={style.bold ? "bold" : "normal"}
-          onChange={(e) => onChange({ bold: e.target.value === "bold" })}
+          value={String(style.weight)}
+          onChange={(e) => onChange({ weight: parseInt(e.target.value, 10) })}
         >
-          <option value="normal">標準</option>
-          <option value="bold">粗體</option>
+          <option value="400">標準</option>
+          <option value="700">粗體</option>
+          <option value="800">特粗</option>
+          <option value="900">最粗</option>
         </select>
       </div>
 
@@ -346,6 +403,24 @@ export function StylePanel({ style, videoW, videoH, onChange, onReset, onClose }
         value={style.spacing}
         onChange={(v) => onChange({ spacing: v })}
         display={(style.spacing * vh).toFixed(1)}
+      />
+      <RangeRow
+        label="行高"
+        min={1}
+        max={2}
+        step={0.05}
+        value={style.lineHeight}
+        onChange={(v) => onChange({ lineHeight: v })}
+        display={style.lineHeight.toFixed(2)}
+      />
+      <RangeRow
+        label="最大寬度"
+        min={0.3}
+        max={0.96}
+        step={0.01}
+        value={style.maxWidth}
+        onChange={(v) => onChange({ maxWidth: v })}
+        display={`${Math.round(style.maxWidth * 100)}%`}
       />
 
       <div className="style-field">
@@ -399,29 +474,29 @@ export function StylePanel({ style, videoW, videoH, onChange, onReset, onClose }
           <RangeRow
             label="圓角"
             min={0}
-            max={40}
-            step={1}
+            max={0.06}
+            step={0.001}
             value={style.boxRadius}
             onChange={(v) => onChange({ boxRadius: v })}
-            display={style.boxRadius.toFixed(0)}
+            display={`${(style.boxRadius * vh).toFixed(0)}px`}
           />
           <RangeRow
-            label="寬度"
-            min={-30}
-            max={60}
-            step={1}
-            value={style.boxPadX}
-            onChange={(v) => onChange({ boxPadX: v })}
-            display={style.boxPadX.toFixed(0)}
+            label="左右內距"
+            min={0}
+            max={0.12}
+            step={0.001}
+            value={style.padX}
+            onChange={(v) => onChange({ padX: v })}
+            display={`${(style.padX * vh).toFixed(0)}px`}
           />
           <RangeRow
-            label="高度"
-            min={-30}
-            max={60}
-            step={1}
-            value={style.boxPadY}
-            onChange={(v) => onChange({ boxPadY: v })}
-            display={style.boxPadY.toFixed(0)}
+            label="上下內距"
+            min={0}
+            max={0.08}
+            step={0.001}
+            value={style.padY}
+            onChange={(v) => onChange({ padY: v })}
+            display={`${(style.padY * vh).toFixed(0)}px`}
           />
           <p className="style-hint">圓角只影響預覽,燒錄成品為直角</p>
         </div>
@@ -435,14 +510,29 @@ export function StylePanel({ style, videoW, videoH, onChange, onReset, onClose }
       <RangeRow
         label="描邊"
         min={0}
-        max={12}
-        step={0.5}
+        max={0.012}
+        step={0.0005}
         value={style.outline}
         onChange={(v) => onChange({ outline: v })}
-        display={style.outline.toFixed(1)}
+        display={`${(style.outline * vh).toFixed(1)}px`}
         disabled={style.box}
         title={style.box ? "開啟底框時無法同時描邊" : undefined}
       />
+      <div className="style-indent">
+        <div className="style-field">
+          <label>描邊顏色</label>
+          <input
+            type="color"
+            value={style.outlineColor}
+            onChange={(e) => onChange({ outlineColor: e.target.value })}
+          />
+          <input
+            className="style-hex mono"
+            value={style.outlineColor}
+            onChange={(e) => onChange({ outlineColor: e.target.value })}
+          />
+        </div>
+      </div>
 
       <RangeRow
         label="水平"
@@ -488,6 +578,32 @@ export function StylePanel({ style, videoW, videoH, onChange, onReset, onClose }
         />
         底線
       </label>
+
+      <label className="style-checkbox">
+        <input
+          type="checkbox"
+          checked={style.highlight}
+          onChange={(e) => onChange({ highlight: e.target.checked })}
+        />
+        逐字高亮
+      </label>
+      {style.highlight && (
+        <div className="style-indent">
+          <div className="style-field">
+            <label>高亮色</label>
+            <input
+              type="color"
+              value={style.highlightColor}
+              onChange={(e) => onChange({ highlightColor: e.target.value })}
+            />
+            <input
+              className="style-hex mono"
+              value={style.highlightColor}
+              onChange={(e) => onChange({ highlightColor: e.target.value })}
+            />
+          </div>
+        </div>
+      )}
 
       <button className="btn small style-reset" onClick={onReset}>
         ↺ 還原

@@ -1492,6 +1492,21 @@ a.btn {
   animation: fadeIn 0.2s ease-out;
 }
 
+@keyframes subPop {
+  from {
+    transform: scale(0.7);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.subtitle-pop-inner {
+  animation: subPop 0.18s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
 /* ---- 字幕樣式面板 ---- */
 
 .player-pane {

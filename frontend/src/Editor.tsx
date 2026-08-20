@@ -165,9 +165,10 @@ export default function Editor({ projectId }: { projectId: string }) {
       const m = s.marks ?? [];
       justLoadedMarksRef.current = m;
       setMarks(m);
-      // 複製一份,避免這個 ref 跟共用的 DEFAULT_STYLE 常數同一個參照
-      // (不然「還原」按鈕若剛好也還原成 DEFAULT_STYLE,dirty 判斷會誤判成沒變動而漏存)
-      const st = s.style ? s.style : { ...DEFAULT_STYLE };
+      // 與 DEFAULT_STYLE 合併,補齊舊專案存檔缺少的新欄位(也避免這個 ref
+      // 跟共用的 DEFAULT_STYLE 常數同一個參照,不然「還原」按鈕若剛好也還原成
+      // DEFAULT_STYLE,dirty 判斷會誤判成沒變動而漏存)
+      const st = { ...DEFAULT_STYLE, ...(s.style ?? {}) };
       justLoadedStyleRef.current = st;
       setSubStyleState(st);
     });
@@ -1163,6 +1164,8 @@ export default function Editor({ projectId }: { projectId: string }) {
               videoRef={videoRef}
               style={subStyle}
               text={activeText}
+              words={activeIdx >= 0 ? segments[activeIdx].words : undefined}
+              currentTime={currentTime}
               open={styleOpen}
               onOpen={() => setStyleOpen(true)}
               onChange={patchStyle}
