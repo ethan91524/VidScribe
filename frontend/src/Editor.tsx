@@ -1529,7 +1529,7 @@ export default function Editor({ projectId }: { projectId: string }) {
       <main
         className="editor"
         ref={editorRef}
-        style={{ gridTemplateColumns: videoCollapsed ? "1fr" : `${leftPct}% 8px 1fr` }}
+        style={{ gridTemplateColumns: videoCollapsed ? "1fr" : `${leftPct}% 16px 1fr` }}
       >
         {/* 收合影片用 display:none 而非不 render,video 元素才不會被卸載重載,
             播放進度/暫停狀態才能在展開回來時保留。 */}
