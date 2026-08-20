@@ -783,21 +783,12 @@ button {
 }
 
 .row-time {
-  display: flex;
-  align-items: baseline;
-  justify-content: flex-end;
-  gap: 3px;
   font-family: var(--mono);
   font-size: 12.5px;
   color: var(--green-dark);
   padding-top: 3px;
+  text-align: right;
   white-space: nowrap;
-}
-
-.row-style-mark {
-  color: var(--green-dark);
-  font-size: 10px;
-  line-height: 1;
 }
 
 .row-text {
@@ -1628,27 +1619,6 @@ a.btn {
   flex-direction: column;
   gap: 10px;
   font-size: 13px;
-}
-
-.style-scope-toggle {
-  display: flex;
-  gap: 6px;
-}
-
-.style-scope-toggle .btn.small.active {
-  background: var(--green);
-  border-color: var(--green);
-  color: var(--green-ink);
-  font-weight: 700;
-}
-
-/* display:contents 讓 fieldset 不生出自己的盒子,子元素照舊參與 .style-panel 的
-   flex 直排+gap 排版;disabled 屬性本身不受 CSS display 影響,照樣鎖住底下控制項 */
-.style-fieldset {
-  display: contents;
-  border: 0;
-  margin: 0;
-  padding: 0;
 }
 
 .style-panel-head {

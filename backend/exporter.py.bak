@@ -105,9 +105,7 @@ def _ass_color_inline(hex_color: str) -> str:
     return f"&H{b}{g}{r}&".upper()
 
 
-def _locate_word_events(
-    s: dict, tags: str, primary_inline: str, highlight_inline: str, style_name: str
-) -> list[str] | None:
+def _locate_word_events(s: dict, tags: str, primary_inline: str, highlight_inline: str) -> list[str] | None:
     """把一句拆成逐字 Dialogue(當下字用 highlightColor 包住,其餘用字色)。
 
     每個 word 各發一條 [word.start, word.end) 的 Dialogue,文字為整句,
@@ -139,7 +137,7 @@ def _locate_word_events(
         after = _ass_escape(text[idx + len(token):])
         line = f"{before}{{\\c{highlight_inline}}}{mid}{{\\c{primary_inline}}}{after}"
         events.append(
-            f"Dialogue: 0,{_ass_time(w['start'])},{_ass_time(w['end'])},{style_name},,0,0,0,,"
+            f"Dialogue: 0,{_ass_time(w['start'])},{_ass_time(w['end'])},Default,,0,0,0,,"
             f"{{{tags}}}{line}"
         )
     return events
@@ -174,99 +172,38 @@ def _sanitize_style(style: dict | None) -> dict:
     return st
 
 
-# 只有這些欄位會反映在 [V4+ Styles] 的 Style 定義列(字型/字級/粗體/顏色/底框開關/
-# 描邊/陰影/對齊/最大寬度…);x/y/anim/highlight 等其餘欄位只影響每條 Dialogue 自己
-# 的行內標籤。effective style 的這些欄位值相同的句子,可以共用同一個 Style 名稱。
-_STYLE_LINE_FIELDS = [
-    "font", "size", "weight", "italic", "underline", "color", "alpha",
-    "spacing", "box", "boxColor", "boxAlpha", "outline", "outlineColor",
-    "shadow", "maxWidth", "align",
-]
-
-
-def _style_line_key(st: dict) -> tuple:
-    return tuple(st[f] for f in _STYLE_LINE_FIELDS)
-
-
-def _build_style_line(name: str, st: dict, width: int, height: int) -> str:
-    """由一組 effective style 算出一行 [V4+ Styles] 定義。"""
-    fs = max(round(float(st["size"]) * height), 8)
-    spacing = round(float(st["spacing"]) * height, 1)
-    primary = _ass_color(st["color"], float(st["alpha"]))
-    weight = int(float(st.get("weight", 800) or 800))
-    bold_flag = 0 if weight == 400 else -1
-    if st["box"]:
-        # BorderStyle=3(底框)vs 1(描邊)是 Style 定義上的欄位,ASS/libass 沒有
-        # 行內標籤可以逐句切換,所以底框開關不同的句子一定要各自一組 Style,
-        # 不能只用 \bord 之類的標籤在同一個 Style 底下硬做。
-        border_style = 3
-        outline_color = _ass_color(st["boxColor"], float(st["boxAlpha"]))
-        outline = max(round(float(st["padY"]) * height, 1), 0)  # style 層先填一個,實際內距用 \xbord\ybord 逐句控制
-    else:
-        border_style = 1
-        outline_color = _ass_color(st.get("outlineColor", "#000000"), 1.0)
-        outline = round(float(st["outline"]) * height, 1)
-    shadow = round(0.002 * height) if st["shadow"] else 0
-    max_width = float(st.get("maxWidth", 0.86))
-    margin_lr = max(round((1 - max_width) / 2 * width), 0)
-    align_an = {"left": 4, "center": 5, "right": 6}.get(st["align"], 5)
-
-    return (
-        f"Style: {name},{st['font']},{fs},{primary},{primary},"
-        f"{outline_color},&H80000000,{bold_flag},"
-        f"{-1 if st['italic'] else 0},{-1 if st['underline'] else 0},0,"
-        f"100,100,{spacing},0,{border_style},{outline},{shadow},"
-        f"{align_an},{margin_lr},{margin_lr},20,1\n"
-    )
-
-
 def to_ass(segments: list[dict], width: int, height: int, style: dict | None = None) -> str:
-    """燒錄用 ASS 字幕,吃編輯器的全域字幕樣式,以及每句可能有的樣式覆寫
-    (segments[i]["style"],只含有改動的欄位,疊在全域樣式上,規則與前端
-    types.ts 的 effectiveStyle 一致)。
+    """燒錄用 ASS 字幕,吃編輯器的字幕樣式(位置用 \\pos 對齊預覽)。
 
     size/spacing/outline/padX/padY/boxRadius/maxWidth 在前端都是「佔影片
     高度或寬度的比例」,這裡一律直接乘 height/width 換算成該解析度的 px,
     不再走舊版以 1080p 為基準再乘 scale 的間接算法。
     lineHeight、boxRadius 的圓角視覺效果 ASS/libass 無對應欄位,僅預覽生
     效 [TODO];weight 的 800/900 在 ASS 只有 Bold 二值可用,一律映射為粗體。
-
-    每句先算出 effective style,依 _STYLE_LINE_FIELDS 分組:相同組合共用一個
-    Style 定義(用最多句子的那組叫 Default,其餘依序叫 S1、S2…),每條 Dialogue
-    指到自己那組的 Style 名稱。位置/動畫/逐字高亮等不影響 Style 定義列的欄位,
-    照舊用行內標籤,依各句自己的 effective style 產生。
     """
-    global_style = style or {}
+    st = _sanitize_style(style)
+    fs = max(round(float(st["size"]) * height), 8)
+    spacing = round(float(st["spacing"]) * height, 1)
+    primary = _ass_color(st["color"], float(st["alpha"]))
+    weight = int(float(st.get("weight", 800) or 800))
+    bold_flag = 0 if weight == 400 else -1
+    if st["box"]:
+        # BorderStyle=3:OutlineColour 就是底框顏色,Outline 是底框留邊
+        border_style = 3
+        outline_color = _ass_color(st["boxColor"], float(st["boxAlpha"]))
+        pad_x = max(round(float(st["padX"]) * height, 1), 0)
+        pad_y = max(round(float(st["padY"]) * height, 1), 0)
+        outline = pad_y  # style 層先填一個,實際用 \xbord \ybord 分開控制
+    else:
+        border_style = 1
+        outline_color = _ass_color(st.get("outlineColor", "#000000"), 1.0)
+        outline = round(float(st["outline"]) * height, 1)
+        pad_x = pad_y = None
+    shadow = round(0.002 * height) if st["shadow"] else 0
+    max_width = float(st.get("maxWidth", 0.86))
+    margin_lr = max(round((1 - max_width) / 2 * width), 0)
+    align_an = {"left": 4, "center": 5, "right": 6}.get(st["align"], 5)
 
-    def effective(seg: dict) -> dict:
-        merged = {**global_style, **(seg.get("style") or {})}
-        return _sanitize_style(merged)
-
-    live = [s for s in segments if s["text"].strip()]
-    styles_by_seg = [effective(s) for s in live]
-
-    # 分組:相同「會影響 Style 定義列」的欄位值共用一個 Style 名稱
-    groups: dict[tuple, dict] = {}
-    for st in styles_by_seg:
-        key = _style_line_key(st)
-        g = groups.setdefault(key, {"count": 0, "style": st})
-        g["count"] += 1
-
-    # 用最多句子的那組叫 Default,其餘依(用量多寡、其次出現順序)命名 S1、S2…
-    ordered_keys = sorted(groups.keys(), key=lambda k: -groups[k]["count"])
-    style_names: dict[tuple, str] = {
-        key: ("Default" if i == 0 else f"S{i}") for i, key in enumerate(ordered_keys)
-    }
-
-    style_lines = [
-        _build_style_line(style_names[key], groups[key]["style"], width, height)
-        for key in ordered_keys
-    ]
-    if not style_lines:
-        # segments 全空白/空清單時仍要有一個可用的 Style 定義
-        style_lines = [_build_style_line("Default", _sanitize_style(global_style), width, height)]
-
-    styles_block = "".join(style_lines)
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -279,36 +216,38 @@ def to_ass(segments: list[dict], width: int, height: int, style: dict | None = N
         "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"{styles_block}\n"
+        f"Style: Default,{st['font']},{fs},{primary},{primary},"
+        f"{outline_color},&H80000000,{bold_flag},"
+        f"{-1 if st['italic'] else 0},{-1 if st['underline'] else 0},0,"
+        f"100,100,{spacing},0,{border_style},{outline},{shadow},"
+        f"{align_an},{margin_lr},{margin_lr},20,1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
+    pos_x = round(float(st["x"]) * width, 1)
+    pos_y = round(float(st["y"]) * height, 1)
+    tags = f"\\an{align_an}\\pos({pos_x},{pos_y})"
+    if st["box"]:
+        tags += f"\\xbord{pad_x}\\ybord{pad_y}"
+    if st["anim"] == "fade":
+        tags += "\\fad(200,0)"
+    elif st["anim"] == "pop":
+        tags += "\\fscx70\\fscy70\\t(0,140,\\fscx100\\fscy100)"
+
+    primary_inline = _ass_color_inline(st["color"])
+    highlight_inline = _ass_color_inline(st.get("highlightColor", "#C9FF38"))
 
     events: list[str] = []
-    for s, st in zip(live, styles_by_seg):
-        name = style_names[_style_line_key(st)]
-        align_an = {"left": 4, "center": 5, "right": 6}.get(st["align"], 5)
-        pos_x = round(float(st["x"]) * width, 1)
-        pos_y = round(float(st["y"]) * height, 1)
-        tags = f"\\an{align_an}\\pos({pos_x},{pos_y})"
-        if st["box"]:
-            pad_x = max(round(float(st["padX"]) * height, 1), 0)
-            pad_y = max(round(float(st["padY"]) * height, 1), 0)
-            tags += f"\\xbord{pad_x}\\ybord{pad_y}"
-        if st["anim"] == "fade":
-            tags += "\\fad(200,0)"
-        elif st["anim"] == "pop":
-            tags += "\\fscx70\\fscy70\\t(0,140,\\fscx100\\fscy100)"
-
+    for s in segments:
+        if not s["text"].strip():
+            continue
         if st.get("highlight") and s.get("words"):
-            primary_inline = _ass_color_inline(st["color"])
-            highlight_inline = _ass_color_inline(st.get("highlightColor", "#C9FF38"))
-            word_events = _locate_word_events(s, tags, primary_inline, highlight_inline, name)
+            word_events = _locate_word_events(s, tags, primary_inline, highlight_inline)
             if word_events:
                 events.extend(word_events)
                 continue
         events.append(
-            f"Dialogue: 0,{_ass_time(s['start'])},{_ass_time(s['end'])},{name},,0,0,0,,"
+            f"Dialogue: 0,{_ass_time(s['start'])},{_ass_time(s['end'])},Default,,0,0,0,,"
             f"{{{tags}}}{_ass_escape(s['text'])}"
         )
     return header + "\n".join(events) + "\n"

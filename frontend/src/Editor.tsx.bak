@@ -23,7 +23,6 @@ import SafeFrame, { SAFE_FRAMES, matchPresetByRatio } from "./SafeFrame";
 import { SubtitleOverlay, StylePanel } from "./StyleOverlay";
 import {
   DEFAULT_STYLE,
-  effectiveStyle,
   migrateStyle,
   RUNNING_STATUSES,
   statusLabel,
@@ -180,8 +179,6 @@ export default function Editor({ projectId }: { projectId: string }) {
   styleRef.current = subStyle;
   const [styleOpen, setStyleOpen] = useState(false);
   const justLoadedStyleRef = useRef<SubStyle | null>(null);
-  // "all"=面板改全域樣式(現行行為);"one"=面板只改目前選取那句的覆寫
-  const [styleScope, setStyleScope] = useState<"all" | "one">("all");
 
   const [llmAvailable, setLlmAvailable] = useState(false);
   const [fixJob, setFixJob] = useState<FixJob | null>(null);
@@ -958,52 +955,10 @@ export default function Editor({ projectId }: { projectId: string }) {
 
   const curMatch = matches[matchIdx] ?? null;
 
-  // 字幕樣式:局部更新(拖曳/面板調整共用)。scope="one" 時只寫進目前選取那句的
-  // 覆寫欄位(seg.style),不動全域 subStyle;scope="all" 則是原本的全域行為。
-  const patchStyle = useCallback(
-    (patch: Partial<SubStyle>) => {
-      if (styleScope === "one") {
-        const idx = selectedIdxRef.current;
-        if (idx < 0) return;
-        setSegments((prev) => {
-          const seg = prev[idx];
-          if (!seg) return prev;
-          const next = [...prev];
-          next[idx] = { ...seg, style: { ...(seg.style ?? {}), ...patch } };
-          return next;
-        });
-        return;
-      }
-      setSubStyleState((prev) => ({ ...prev, ...patch }));
-    },
-    [styleScope, setSegments]
-  );
-
-  // 清掉目前選取那句的樣式覆寫,恢復成完全跟著全域走
-  const clearSegStyle = useCallback(() => {
-    const idx = selectedIdxRef.current;
-    if (idx < 0) return;
-    setSegments((prev) => {
-      const seg = prev[idx];
-      if (!seg || !seg.style) return prev;
-      const next = [...prev];
-      const { style: _drop, ...rest } = seg;
-      next[idx] = rest as Segment;
-      return next;
-    });
-  }, [setSegments]);
-
-  // 切到「這一句」時,若已有選取句子,順便 seek 過去,讓預覽顯示的就是那一句
-  const handleStyleScopeChange = useCallback(
-    (next: "all" | "one") => {
-      setStyleScope(next);
-      if (next === "one") {
-        const idx = selectedIdxRef.current;
-        if (idx >= 0 && segmentsRef.current[idx]) seekTo(segmentsRef.current[idx].start);
-      }
-    },
-    [seekTo]
-  );
+  // 字幕樣式:局部更新(拖曳/面板調整共用)
+  const patchStyle = useCallback((patch: Partial<SubStyle>) => {
+    setSubStyleState((prev) => ({ ...prev, ...patch }));
+  }, []);
 
 
   // 資訊列:選中句優先,沒有就用播放中那句
@@ -1434,7 +1389,7 @@ export default function Editor({ projectId }: { projectId: string }) {
             <SubtitleOverlay
               videoRef={videoRef}
               layoutKey={layoutKey}
-              style={effectiveStyle(subStyle, activeIdx >= 0 ? segments[activeIdx] : null)}
+              style={subStyle}
               text={activeText}
               words={activeIdx >= 0 ? segments[activeIdx].words : undefined}
               currentTime={currentTime}
@@ -1460,25 +1415,12 @@ export default function Editor({ projectId }: { projectId: string }) {
         <section className="subtitle-pane">
           {styleOpen && (
             <StylePanel
-              style={
-                styleScope === "one"
-                  ? effectiveStyle(subStyle, selectedIdx >= 0 ? segments[selectedIdx] : null)
-                  : subStyle
-              }
+              style={subStyle}
               videoW={videoDims.w}
               videoH={videoDims.h}
               onChange={patchStyle}
               onReset={() => setSubStyleState({ ...DEFAULT_STYLE })}
               onClose={() => setStyleOpen(false)}
-              scope={styleScope}
-              onScopeChange={handleStyleScopeChange}
-              selectedIndex={selectedIdx}
-              selectedText={selectedIdx >= 0 ? segments[selectedIdx].text : null}
-              hasOverride={
-                selectedIdx >= 0 && !!segments[selectedIdx].style &&
-                Object.keys(segments[selectedIdx].style as object).length > 0
-              }
-              onClearOverride={clearSegStyle}
             />
           )}
           <div className="search-bar">
@@ -1569,7 +1511,6 @@ export default function Editor({ projectId }: { projectId: string }) {
                   isActive={idx === activeIdx}
                   isSelected={idx === selectedIdx}
                   isLast={idx === segments.length - 1}
-                  hasStyle={!!seg.style && Object.keys(seg.style).length > 0}
                   editingCursor={editing?.id === seg.id ? editing.cursor : null}
                   query={q}
                   curPos={curMatch && curMatch.segIdx === idx ? curMatch.pos : -1}
@@ -1855,7 +1796,6 @@ interface RowProps {
   isActive: boolean;
   isSelected: boolean;
   isLast: boolean;
-  hasStyle: boolean;
   editingCursor: number | null;
   query: string;
   curPos: number;
@@ -1879,7 +1819,6 @@ const Row = memo(function Row({
   isActive,
   isSelected,
   isLast,
-  hasStyle,
   editingCursor,
   query,
   curPos,
@@ -1911,11 +1850,6 @@ const Row = memo(function Row({
         className="row-time"
         title={`${formatTime(seg.start)} → ${formatTime(seg.end)}`}
       >
-        {hasStyle && (
-          <span className="row-style-mark" title="這句有自訂樣式">
-            ◆
-          </span>
-        )}
         {formatTime(seg.start)}
       </span>
       <div className="row-text-col">

@@ -10,8 +10,6 @@ export interface Segment {
   end: number;
   text: string;
   words?: Word[];
-  /** 單句樣式覆寫,只存有改動的欄位;沒設的欄位跟著全域 SubStyle 走(見 effectiveStyle)。 */
-  style?: Partial<SubStyle>;
 }
 
 export interface Project {
@@ -117,33 +115,6 @@ const STYLE_RANGE: Record<string, [number, number]> = {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
-/** 依 STYLE_RANGE 夾住所有數值欄位、把 weight 正規化成合法四值之一。
- *  migrateStyle(舊存檔)與 effectiveStyle(全域疊單句覆寫)共用同一份範圍表,
- *  避免兩處各存一份容易漏改不同步。 */
-function clampStyleRanges(s: SubStyle): SubStyle {
-  const out: SubStyle = { ...s };
-  for (const [key, [lo, hi]] of Object.entries(STYLE_RANGE)) {
-    const v = (out as unknown as Record<string, unknown>)[key];
-    (out as unknown as Record<string, number>)[key] =
-      typeof v === "number" && Number.isFinite(v)
-        ? clamp(v, lo, hi)
-        : (DEFAULT_STYLE[key as keyof SubStyle] as number);
-  }
-  if (![400, 700, 800, 900].includes(out.weight)) {
-    out.weight = out.weight >= 850 ? 900 : out.weight >= 750 ? 800 : out.weight >= 550 ? 700 : 400;
-  }
-  return out;
-}
-
-/** 全域樣式疊上單句覆寫(若有),沒設定的欄位跟著全域走,並夾一次範圍。
- *  預覽(SubtitleOverlay)與樣式面板(StylePanel)在 scope="one" 時都用這個算要顯示/套用的值。 */
-export function effectiveStyle(
-  global: SubStyle,
-  seg?: { style?: Partial<SubStyle> } | null
-): SubStyle {
-  return clampStyleRanges({ ...global, ...(seg?.style ?? {}) });
-}
-
 /**
  * 把存檔的樣式轉成目前版本的格式。
  *
@@ -174,11 +145,16 @@ export function migrateStyle(raw: unknown): SubStyle {
     s.padY = DEFAULT_STYLE.padY + (num(old.boxPadY) as number) / 1080;
   }
 
+  for (const [key, [lo, hi]] of Object.entries(STYLE_RANGE)) {
+    const v = num((s as unknown as Record<string, unknown>)[key]);
+    (s as unknown as Record<string, number>)[key] = v === undefined ? DEFAULT_STYLE[key as keyof SubStyle] as number : clamp(v, lo, hi);
+  }
+  if (![400, 700, 800, 900].includes(s.weight)) s.weight = s.weight >= 850 ? 900 : s.weight >= 750 ? 800 : s.weight >= 550 ? 700 : 400;
   // 丟掉已淘汰的鍵,免得存回去又被下次載入讀到
   delete (s as unknown as Record<string, unknown>).bold;
   delete (s as unknown as Record<string, unknown>).boxPadX;
   delete (s as unknown as Record<string, unknown>).boxPadY;
-  return clampStyleRanges(s);
+  return s;
 }
 
 export interface DictEntry {

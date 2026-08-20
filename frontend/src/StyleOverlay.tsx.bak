@@ -53,11 +53,6 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.min(Math.max(v, lo), hi);
 }
 
-/** 面板顯示句子文字用,截斷過長內容並加省略號。 */
-function truncateText(text: string, max: number): string {
-  return text.length > max ? text.slice(0, max) + "…" : text;
-}
-
 /** #RRGGBB + 不透明度(0~1) → rgba() 字串,格式不對就退回白色。 */
 function hexToRgba(hex: string, alpha: number): string {
   let h = (hex || "").trim().replace("#", "");
@@ -316,15 +311,6 @@ interface StylePanelProps {
   onChange: (patch: Partial<SubStyle>) => void;
   onReset: () => void;
   onClose: () => void;
-  /** "all"=改全域樣式(現行行為);"one"=只改目前選取那句的覆寫 */
-  scope: "all" | "one";
-  onScopeChange: (scope: "all" | "one") => void;
-  /** scope="one" 時目前選取的句子(-1/null 代表沒選) */
-  selectedIndex: number;
-  selectedText: string | null;
-  /** 該句是否已有樣式覆寫,決定要不要顯示「清除這句樣式」 */
-  hasOverride: boolean;
-  onClearOverride: () => void;
 }
 
 function RangeRow({
@@ -367,63 +353,22 @@ function RangeRow({
   );
 }
 
-/** 浮動樣式面板,對應 SubtitleOverlay 的所有可調欄位。
- *  scope="all" 時行為與過去完全一致(改全域樣式);scope="one" 時面板顯示/套用
- *  的是「全域疊上該句覆寫」的值,使用者的改動只會寫進該句的覆寫。 */
-export function StylePanel({
-  style,
-  videoW,
-  videoH,
-  onChange,
-  onReset,
-  onClose,
-  scope,
-  onScopeChange,
-  selectedIndex,
-  selectedText,
-  hasOverride,
-  onClearOverride,
-}: StylePanelProps) {
+/** 浮動樣式面板,對應 SubtitleOverlay 的所有可調欄位。 */
+export function StylePanel({ style, videoW, videoH, onChange, onReset, onClose }: StylePanelProps) {
   const vw = videoW || 1920;
   const vh = videoH || 1080;
-  // scope="one" 但沒有選取句子:整組控制項鎖住,提示先點一句字幕
-  const locked = scope === "one" && selectedText === null;
   return (
     <div className="style-panel" role="dialog" aria-label="字幕樣式">
-      <div className="style-scope-toggle">
-        <button
-          type="button"
-          className={"btn small" + (scope === "all" ? " active" : "")}
-          onClick={() => onScopeChange("all")}
-        >
-          全部字幕
-        </button>
-        <button
-          type="button"
-          className={"btn small" + (scope === "one" ? " active" : "")}
-          onClick={() => onScopeChange("one")}
-        >
-          這一句
-        </button>
-      </div>
-
       <div className="style-panel-head">
         <div>
           <div className="style-panel-title">字幕樣式</div>
-          <div className="style-panel-sub">
-            {scope === "all"
-              ? "位置與大小也可以直接在影片上拖曳。"
-              : selectedText !== null
-                ? `第 ${selectedIndex + 1} 句:${truncateText(selectedText, 14)}`
-                : "先點一句字幕"}
-          </div>
+          <div className="style-panel-sub">位置與大小也可以直接在影片上拖曳。</div>
         </div>
         <button className="icon-btn" onClick={onClose} aria-label="關閉">
           ✕
         </button>
       </div>
 
-      <fieldset className="style-fieldset" disabled={locked}>
       <div className="style-field">
         <label>動畫樣式</label>
         <select
@@ -676,19 +621,10 @@ export function StylePanel({
           </div>
         </div>
       )}
-      </fieldset>
 
-      {scope === "all" ? (
-        <button className="btn small style-reset" onClick={onReset}>
-          ↺ 還原
-        </button>
-      ) : (
-        hasOverride && (
-          <button className="btn small style-reset" onClick={onClearOverride}>
-            清除這句樣式
-          </button>
-        )
-      )}
+      <button className="btn small style-reset" onClick={onReset}>
+        ↺ 還原
+      </button>
     </div>
   );
 }
