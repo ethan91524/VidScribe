@@ -68,9 +68,12 @@ export function matchPresetByRatio(vw: number, vh: number): string {
 export default function SafeFrame({
   videoRef,
   frameKey,
+  layoutKey,
 }: {
   videoRef: React.RefObject<HTMLVideoElement>;
   frameKey: string;
+  /** 版面尺寸識別字串,改變時重新量測(不能只靠 ResizeObserver) */
+  layoutKey?: string;
 }) {
   const [rect, setRect] = useState<{
     left: number;
@@ -96,26 +99,29 @@ export default function SafeFrame({
       const A = W / H;
       let w = W;
       let h = H;
-      let left = 0;
-      let top = 0;
+      // 同 StyleOverlay:video 用 object-fit:contain 後會在容器內置中留邊,
+      // 安全框絕對定位在容器上,必須加上 video 自身的位移才對得準。
+      let left = v.offsetLeft;
+      let top = v.offsetTop;
       if (A > a) {
         w = H * a;
-        left = (W - w) / 2;
+        left += (W - w) / 2;
       } else {
         h = W / a;
-        top = (H - h) / 2;
+        top += (H - h) / 2;
       }
       setRect({ left, top, width: w, height: h });
     };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(v);
+    if (v.parentElement) ro.observe(v.parentElement);
     v.addEventListener("loadedmetadata", update);
     return () => {
       ro.disconnect();
       v.removeEventListener("loadedmetadata", update);
     };
-  }, [videoRef, frameKey]);
+  }, [videoRef, frameKey, layoutKey]);
 
   if (!preset || !preset.ratio || !rect) return null;
   return (

@@ -538,30 +538,108 @@ button {
 .editor {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(360px, 47%) 1fr;
+  grid-template-columns: minmax(240px, 47%) 6px 1fr;
   overflow: hidden;
 }
 
 .player-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   padding: 16px 20px;
   overflow-y: auto;
 }
 
 .video-wrap {
   position: relative;
+  flex: 1;
+  min-height: 0;
   background: #000;
   border-radius: 12px;
   overflow: hidden;
 }
 
+.video-wrap.audio-only {
+  flex: 0 0 auto;
+}
+
 .video-wrap video {
   display: block;
   width: 100%;
-  max-height: 60vh;
+  height: 100%;
+  object-fit: contain;
 }
 
 .video-wrap.audio-only video {
   height: 110px;
+}
+
+/* ---- 拖曳分隔線(版面調整) ---- */
+
+.resize-handle {
+  flex-shrink: 0;
+  background: transparent;
+  position: relative;
+}
+
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  background: var(--line-strong);
+  transition: background 0.12s;
+}
+
+.resize-handle:hover::after {
+  background: var(--green);
+}
+
+.resize-handle-h {
+  height: 6px;
+  cursor: row-resize;
+}
+
+.resize-handle-h::after {
+  left: 0;
+  right: 0;
+  top: 2px;
+  height: 2px;
+  border-radius: 2px;
+}
+
+.resize-handle-v {
+  width: 6px;
+  cursor: col-resize;
+}
+
+.resize-handle-v::after {
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  border-radius: 2px;
+}
+
+.wave-resizable {
+  flex-shrink: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--panel);
+}
+
+/* ---- 工具列:安全框下拉 ---- */
+
+.toolbar-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.toolbar-select .select {
+  cursor: pointer;
 }
 
 /* ---- 安全框 ---- */
@@ -1257,9 +1335,14 @@ a.btn {
 
 @media (max-width: 900px) {
   .editor {
-    grid-template-columns: 1fr;
+    /* 窄螢幕一律單欄堆疊,蓋掉 JS 依 leftPct 算出的 inline grid-template-columns */
+    grid-template-columns: 1fr !important;
     grid-template-rows: auto 1fr;
     overflow-y: auto;
+  }
+
+  .resize-handle-v {
+    display: none;
   }
 
   .subtitle-pane {
@@ -1376,57 +1459,64 @@ a.btn {
 
 .merge-btn {
   position: absolute;
-  left: 14px;
-  bottom: -9px;
+  left: 60px;
+  bottom: -10px;
   z-index: 3;
-  width: 20px;
-  height: 14px;
+  width: 22px;
+  height: 16px;
   padding: 0;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--panel);
-  color: var(--muted);
+  color: var(--line-strong);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  opacity: 0;
+  opacity: 1;
+  pointer-events: auto;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
 }
 
-.sub-row:hover .merge-btn {
-  opacity: 1;
-}
-
 .merge-btn:hover {
-  color: var(--green-dark);
+  color: var(--green);
   border-color: var(--green);
 }
 
-/* ---- 逐字位置點(按住 Alt) ---- */
+/* ---- 逐字位置點(Alt 切換):點與字同一欄,點永遠在對應字正上方 ---- */
 
-.word-dots {
-  position: relative;
-  height: 10px;
-  width: 100%;
-  margin-top: 2px;
+.row-words {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
 }
 
-.word-dots .dot {
-  position: absolute;
-  top: 2px;
+.word-col {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 1px;
+  cursor: pointer;
+}
+
+.word-col .dot {
   width: 6px;
   height: 6px;
+  margin-bottom: 3px;
   border-radius: 50%;
   background: var(--line-strong);
-  transform: translateX(-50%);
-  cursor: pointer;
   transition: transform 0.1s, background 0.1s;
 }
 
-.word-dots .dot:hover {
+.word-col:hover .dot {
   background: var(--green);
-  transform: translateX(-50%) scale(1.6);
+  transform: scale(1.6);
+}
+
+.word-col .ch {
+  font-size: 15px;
+  line-height: 1.65;
+  white-space: pre-wrap;
 }
 
 /* ---- 字幕樣式:影片內預覽疊層 ---- */
@@ -1507,28 +1597,24 @@ a.btn {
   animation: subPop 0.18s cubic-bezier(0.2, 1.4, 0.4, 1);
 }
 
-/* ---- 字幕樣式面板 ---- */
-
-.player-pane {
-  position: relative;
-}
+/* ---- 字幕樣式面板(出現在字幕區最上方,推開清單,不再蓋住影片) ---- */
 
 .style-panel {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  width: min(300px, calc(100% - 32px));
-  max-height: calc(100% - 32px);
+  width: 100%;
+  max-width: 100%;
+  max-height: 45vh;
   overflow-y: auto;
   background: var(--panel);
-  border-radius: 14px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
-  z-index: 30;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  margin: 12px 14px 4px;
   padding: 14px 16px 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   font-size: 13px;
+  flex-shrink: 0;
 }
 
 .style-panel-head {

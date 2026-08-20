@@ -73,7 +73,13 @@ function hexToRgba(hex: string, alpha: number): string {
  * 影片實際內容區(扣掉黑邊)的座標,數學與 SafeFrame.tsx 相同。
  * 另外回傳來源解析度(videoWidth/videoHeight),樣式換算要用。
  */
-export function useVideoContentRect(videoRef: React.RefObject<HTMLVideoElement>) {
+export function useVideoContentRect(
+  videoRef: React.RefObject<HTMLVideoElement>,
+  /** 版面尺寸的識別字串;改變就強制重新量測。ResizeObserver 在頁面沒有
+   *  進行渲染步驟時不會觸發,而且只有位移、沒有尺寸變化時也不會觸發,
+   *  所以不能只靠它。 */
+  layoutKey?: string
+) {
   const [rect, setRect] = useState<{
     left: number;
     top: number;
@@ -99,14 +105,17 @@ export function useVideoContentRect(videoRef: React.RefObject<HTMLVideoElement>)
       const A = W / H;
       let w = W;
       let h = H;
-      let left = 0;
-      let top = 0;
+      // 疊層是絕對定位在 .video-wrap 上,而 video 元素用 object-fit:contain 填滿容器後
+      // 本身可能置中留邊、與容器原點不重合,所以要把 video 在容器內的位移一起算進來,
+      // 否則拖曳版面改變影片大小時字幕會整個偏掉。
+      let left = v.offsetLeft;
+      let top = v.offsetTop;
       if (A > a) {
         w = H * a;
-        left = (W - w) / 2;
+        left += (W - w) / 2;
       } else {
         h = W / a;
-        top = (H - h) / 2;
+        top += (H - h) / 2;
       }
       setRect({ left, top, width: w, height: h });
       setVideoW(vw);
@@ -115,12 +124,13 @@ export function useVideoContentRect(videoRef: React.RefObject<HTMLVideoElement>)
     update();
     const ro = new ResizeObserver(update);
     ro.observe(v);
+    if (v.parentElement) ro.observe(v.parentElement);
     v.addEventListener("loadedmetadata", update);
     return () => {
       ro.disconnect();
       v.removeEventListener("loadedmetadata", update);
     };
-  }, [videoRef]);
+  }, [videoRef, layoutKey]);
 
   return { rect, videoW, videoH };
 }
@@ -134,6 +144,8 @@ interface SubtitleOverlayProps {
   open: boolean;
   onOpen: () => void;
   onChange: (patch: Partial<SubStyle>) => void;
+  /** 版面尺寸識別字串,改變時重新量測影片內容區 */
+  layoutKey?: string;
 }
 
 /** 疊在影片內容區上的字幕預覽,可直接拖曳改位置/大小,點一下開設定面板。 */
@@ -146,8 +158,9 @@ export function SubtitleOverlay({
   open,
   onOpen,
   onChange,
+  layoutKey,
 }: SubtitleOverlayProps) {
-  const { rect, videoW, videoH } = useVideoContentRect(videoRef);
+  const { rect, videoW, videoH } = useVideoContentRect(videoRef, layoutKey);
 
   if (!rect) return null;
   const displayText = text || (open ? "字幕樣式預覽" : "");

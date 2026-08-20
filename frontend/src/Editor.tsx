@@ -62,10 +62,49 @@ const HOTKEYS: [string, string][] = [
   ["Delete", "刪除選中的字幕"],
   ["雙擊波形", "新增 / 移除 Mark 點"],
   ["Ctrl+Z / Ctrl+Y", "復原 / 重做"],
-  ["按住 Alt", "顯示逐字位置點(點一下跳到該字)"],
+  ["Alt", "顯示/隱藏逐字位置點(切換)"],
 ];
 
 const round3 = (x: number) => Math.round(x * 1000) / 1000;
+
+/** SRT/VTT 都用的時間碼:00:00:01,500 或 00:00:01.500 → 秒數。 */
+function parseTimecode(h: string, m: string, s: string, ms: string): number {
+  return Number(h) * 3600 + Number(m) * 60 + Number(s) + Number(ms) / 1000;
+}
+
+/**
+ * 前端解析 SRT/VTT 字幕檔:只認時間碼列(逗號或句點都當毫秒分隔),
+ * 忽略序號列與 WEBVTT 標頭,直到空行為止的內容當作該句文字。
+ * 用來實作「匯入修正字幕」:取代目前 segments 的文字與時間,words 清空。
+ */
+function parseSubtitleText(content: string): Segment[] {
+  const lines = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  const timeRe =
+    /(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[.,](\d{3})/;
+  const segs: Segment[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const m = timeRe.exec(lines[i]);
+    if (m) {
+      const start = parseTimecode(m[1], m[2], m[3], m[4]);
+      const end = parseTimecode(m[5], m[6], m[7], m[8]);
+      i++;
+      const textLines: string[] = [];
+      while (i < lines.length && lines[i].trim() !== "") {
+        textLines.push(lines[i]);
+        i++;
+      }
+      const text = textLines.join("\n").trim();
+      if (text && end > start) {
+        segs.push({ id: uid(), start: round3(start), end: round3(end), text, words: [] });
+      }
+    } else {
+      i++;
+    }
+  }
+  segs.sort((a, b) => a.start - b.start || a.end - b.end);
+  return segs;
+}
 
 /** 把 text 內所有 query 出現處包成 <mark>,curPos 那一處多加 .cur。 */
 function renderHighlighted(text: string, query: string, curPos: number) {
@@ -111,6 +150,15 @@ export default function Editor({ projectId }: { projectId: string }) {
   const [cutsStatus, setCutsStatus] = useState("idle");
   const [safeFrame, setSafeFrame] = useState("off");
   const [videoDims, setVideoDims] = useState({ w: 0, h: 0 });
+
+  // ---- 版面調整(波形高度 / 左右欄寬 / 影片收合) ----
+  const [waveHeight, setWaveHeight] = useState(190);
+  const [leftPct, setLeftPct] = useState(47);
+  const [videoCollapsed, setVideoCollapsed] = useState(false);
+  const editorRef = useRef<HTMLElement>(null);
+  const videoWrapRef = useRef<HTMLDivElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const layoutLoadedRef = useRef(false);
   const [burnJob, setBurnJob] = useState<BurnJob | null>(null);
   const [editing, setEditing] = useState<EditingState | null>(null);
   const editingRef = useRef(editing);
@@ -391,6 +439,121 @@ export default function Editor({ projectId }: { projectId: string }) {
     return () => window.removeEventListener("beforeunload", warn);
   }, []);
 
+  // 版面尺寸(波形高度/左右欄寬):讀取 localStorage 還原,重開專案也記得
+  useEffect(() => {
+    layoutLoadedRef.current = false;
+    try {
+      const raw = localStorage.getItem(`vidscribe:layout:${projectId}`);
+      if (raw) {
+        const v = JSON.parse(raw) as { waveHeight?: number; leftPct?: number };
+        if (typeof v.waveHeight === "number") setWaveHeight(v.waveHeight);
+        if (typeof v.leftPct === "number") setLeftPct(v.leftPct);
+      }
+    } catch {
+      // 壞掉的存檔就當沒有,用預設值
+    }
+    layoutLoadedRef.current = true;
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!layoutLoadedRef.current) return;
+    try {
+      localStorage.setItem(
+        `vidscribe:layout:${projectId}`,
+        JSON.stringify({ waveHeight, leftPct })
+      );
+    } catch {
+      // localStorage 滿了或被擋就略過,不影響編輯
+    }
+  }, [projectId, waveHeight, leftPct]);
+
+  // 拖曳分隔線:波形區高度(上下拖,80px~40vh)
+  const beginWaveResize = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      const startY = e.clientY;
+      const startH = waveHeight;
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "row-resize";
+      const onMove = (ev: PointerEvent) => {
+        const maxH = window.innerHeight * 0.4;
+        const next = Math.min(Math.max(startH + (ev.clientY - startY), 80), maxH);
+        setWaveHeight(next);
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [waveHeight]
+  );
+
+  // 拖曳分隔線:影片區/字幕區寬度比例(左右拖,25%~75%)
+  const beginColResize = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const el = editorRef.current;
+    if (!el) return;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    const onMove = (ev: PointerEvent) => {
+      const rect = el.getBoundingClientRect();
+      if (!rect.width) return;
+      const pct = ((ev.clientX - rect.left) / rect.width) * 100;
+      setLeftPct(Math.min(Math.max(pct, 25), 75));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    const el = videoWrapRef.current;
+    if (!el) return;
+    el.requestFullscreen?.().catch(() => {
+      // 部分瀏覽器/情境會拒絕全螢幕請求,忽略即可,不需要彈錯誤
+    });
+  }, []);
+
+  // ---- 匯入修正字幕(SRT/VTT,前端自行解析,取代目前 segments) ----
+  const triggerImport = useCallback(() => {
+    importInputRef.current?.click();
+  }, []);
+
+  const handleImportFile = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = ""; // 重置,允許再次選同一個檔案
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const text = String(reader.result ?? "");
+          const parsed = parseSubtitleText(text);
+          if (!parsed.length) {
+            throw new Error("沒有解析到任何字幕內容,請確認是有效的 SRT/VTT 檔案。");
+          }
+          setSegments(() => parsed);
+          setSelectedIdx(-1);
+          setEditing(null);
+        } catch (err) {
+          alert(`匯入失敗:${err instanceof Error ? err.message : String(err)}`);
+        }
+      };
+      reader.onerror = () => alert("讀取檔案失敗,請重新選擇檔案。");
+      reader.readAsText(file);
+    },
+    [setSegments]
+  );
+
   // ---- 編輯操作 ----
 
   const commitText = useCallback(
@@ -670,27 +833,25 @@ export default function Editor({ projectId }: { projectId: string }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [undo, redo, seekTo, togglePlay, setSegments, deleteSegment]);
 
-  // 按住 Alt 顯示逐字位置點(preventDefault 防瀏覽器搶去聚焦選單列)
+  // 按 Alt 切換逐字位置點顯示(preventDefault 防瀏覽器搶去聚焦選單列;
+  // e.repeat 擋住按住不放時 keydown 連發,不然每次連發都會再切一次)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Alt") {
         e.preventDefault();
-        setShowDots(true);
+        if (e.repeat) return;
+        setShowDots((v) => !v);
       }
     };
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === "Alt") setShowDots(false);
-    };
-    const onBlur = () => setShowDots(false);
     window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
-    window.addEventListener("blur", onBlur);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
-      window.removeEventListener("blur", onBlur);
     };
   }, []);
+
+  // 版面尺寸一變就讓字幕/安全框疊層重新量測影片內容區。
+  // 只靠 ResizeObserver 不夠:頁面沒有進行渲染步驟時它不會觸發。
+  const layoutKey = `${leftPct}|${waveHeight}|${videoCollapsed}`;
 
   const activeIdx = useMemo(() => activeIndexAt(segments, currentTime), [segments, currentTime]);
 
@@ -1047,29 +1208,38 @@ export default function Editor({ projectId }: { projectId: string }) {
         onBurn={startBurn}
       />
 
-      {peaks && project.duration ? (
-        <Waveform
-          peaks={peaks}
-          duration={project.duration}
-          segments={segments}
-          currentTime={currentTime}
-          activeIdx={activeIdx}
-          selectedIdx={selectedIdx}
-          isPlaying={isPlaying}
-          cuts={cuts}
-          marks={marks}
-          cutsStatus={cutsStatus}
-          onDetectCuts={detectCuts}
-          onAddMark={addMark}
-          onRemoveMark={removeMark}
-          onSeek={seekTo}
-          onSelect={setSelectedIdx}
-          onCommitTimes={handleCommitTimes}
-          onCreate={handleCreate}
-        />
-      ) : (
-        <div className="wave-strip wave-loading">波形載入中…</div>
-      )}
+      <div className="wave-resizable" style={{ height: waveHeight }}>
+        {peaks && project.duration ? (
+          <Waveform
+            peaks={peaks}
+            duration={project.duration}
+            segments={segments}
+            currentTime={currentTime}
+            activeIdx={activeIdx}
+            selectedIdx={selectedIdx}
+            isPlaying={isPlaying}
+            cuts={cuts}
+            marks={marks}
+            cutsStatus={cutsStatus}
+            onDetectCuts={detectCuts}
+            onAddMark={addMark}
+            onRemoveMark={removeMark}
+            onSeek={seekTo}
+            onSelect={setSelectedIdx}
+            onCommitTimes={handleCommitTimes}
+            onCreate={handleCreate}
+          />
+        ) : (
+          <div className="wave-strip wave-loading">波形載入中…</div>
+        )}
+      </div>
+      <div
+        className="resize-handle resize-handle-h"
+        onPointerDown={beginWaveResize}
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="拖曳調整波形區高度"
+      />
 
       <div className="toolbar">
         <button
@@ -1103,6 +1273,21 @@ export default function Editor({ projectId }: { projectId: string }) {
           ↻
         </button>
         <span className="toolbar-spacer" />
+        <button
+          className="btn small"
+          onClick={() => setVideoCollapsed((v) => !v)}
+          title={videoCollapsed ? "展開影片區" : "收合影片區,字幕區佔滿寬度"}
+        >
+          {videoCollapsed ? "展開影片" : "收合影片"}
+        </button>
+        <button
+          className="btn small"
+          onClick={toggleFullscreen}
+          disabled={videoCollapsed}
+          title="影片全螢幕播放"
+        >
+          全螢幕
+        </button>
         <button className="btn small" onClick={openDict} title="管理錯字自動取代清單">
           詞庫
         </button>
@@ -1112,6 +1297,37 @@ export default function Editor({ projectId }: { projectId: string }) {
           title="編輯影片內字幕樣式"
         >
           字幕樣式
+        </button>
+        <label className="toolbar-select" title="設定安全框預覽">
+          <span>安全框</span>
+          <select
+            className="select"
+            value={safeFrame}
+            onChange={(e) => {
+              setSafeFrame(e.target.value);
+              localStorage.setItem(`vidscribe:safeframe:${projectId}`, e.target.value);
+            }}
+          >
+            {SAFE_FRAMES.map((p) => (
+              <option key={p.key} value={p.key}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept=".srt,.vtt"
+          style={{ display: "none" }}
+          onChange={handleImportFile}
+        />
+        <button
+          className="btn small"
+          onClick={triggerImport}
+          title="用 SRT/VTT 檔取代目前字幕的文字與時間(可 Ctrl+Z 復原)"
+        >
+          匯入修正字幕
         </button>
         {llmAvailable &&
           (fixJob?.status === "running" ? (
@@ -1137,9 +1353,18 @@ export default function Editor({ projectId }: { projectId: string }) {
         </details>
       </div>
 
-      <main className="editor">
-        <section className="player-pane">
-          <div className={"video-wrap" + (project.has_video === false ? " audio-only" : "")}>
+      <main
+        className="editor"
+        ref={editorRef}
+        style={{ gridTemplateColumns: videoCollapsed ? "1fr" : `${leftPct}% 6px 1fr` }}
+      >
+        {/* 收合影片用 display:none 而非不 render,video 元素才不會被卸載重載,
+            播放進度/暫停狀態才能在展開回來時保留。 */}
+        <section className="player-pane" style={{ display: videoCollapsed ? "none" : undefined }}>
+          <div
+            ref={videoWrapRef}
+            className={"video-wrap" + (project.has_video === false ? " audio-only" : "")}
+          >
             <video
               ref={videoRef}
               src={api.mediaUrl(projectId)}
@@ -1160,9 +1385,10 @@ export default function Editor({ projectId }: { projectId: string }) {
                 );
               }}
             />
-            <SafeFrame videoRef={videoRef} frameKey={safeFrame} />
+            <SafeFrame videoRef={videoRef} frameKey={safeFrame} layoutKey={layoutKey} />
             <SubtitleOverlay
               videoRef={videoRef}
+              layoutKey={layoutKey}
               style={subStyle}
               text={activeText}
               words={activeIdx >= 0 ? segments[activeIdx].words : undefined}
@@ -1173,26 +1399,20 @@ export default function Editor({ projectId }: { projectId: string }) {
             />
           </div>
           <div className="player-controls">
-            <label className="wave-zoom-label" htmlFor="safeframe-select">
-              安全框
-            </label>
-            <select
-              id="safeframe-select"
-              className="select"
-              value={safeFrame}
-              onChange={(e) => {
-                setSafeFrame(e.target.value);
-                localStorage.setItem(`vidscribe:safeframe:${projectId}`, e.target.value);
-              }}
-            >
-              {SAFE_FRAMES.map((p) => (
-                <option key={p.key} value={p.key}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-            <span className="hint">紅色斜紋是平台 UI 會遮住的區域,字幕壓到就該換行</span>
+            <span className="hint">紅色斜紋是平台 UI 會遮住的區域,字幕壓到就該換行(安全框選單已移到上方工具列)</span>
           </div>
+        </section>
+
+        <div
+          className="resize-handle resize-handle-v"
+          style={{ display: videoCollapsed ? "none" : undefined }}
+          onPointerDown={beginColResize}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="拖曳調整影片區/字幕區寬度"
+        />
+
+        <section className="subtitle-pane">
           {styleOpen && (
             <StylePanel
               style={subStyle}
@@ -1203,9 +1423,6 @@ export default function Editor({ projectId }: { projectId: string }) {
               onClose={() => setStyleOpen(false)}
             />
           )}
-        </section>
-
-        <section className="subtitle-pane">
           <div className="search-bar">
             <svg className="search-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden>
               <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
@@ -1620,7 +1837,8 @@ const Row = memo(function Row({
 }: RowProps) {
   const cls =
     "sub-row" + (isActive ? " active" : "") + (isSelected ? " selected" : "");
-  const dur = seg.end - seg.start;
+  // 逐字模式(showDots)要有 words 才切成逐字欄位;沒有 words 的句子維持原樣顯示,不塞空列
+  const wordMode = showDots && editingCursor === null && !!seg.words && seg.words.length > 0;
   return (
     <div
       ref={rowRef}
@@ -1646,30 +1864,30 @@ const Row = memo(function Row({
             onMergeUp={onMergeUp}
             onTab={onTab}
           />
+        ) : wordMode ? (
+          // 逐字模式:點與字放進同一欄(.word-col 內 dot 在上、字在下),
+          // 不論字寬如何,點一定對齊在它對應的字正上方。
+          // ⚠️ 這個模式下不走 renderHighlighted,搜尋高亮暫時失效。
+          <div className="row-words">
+            {seg.words!.map((w, i) => (
+              <span
+                key={i}
+                className="word-col"
+                title={w.word}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onWordSeek(w.start);
+                }}
+              >
+                <i className="dot" aria-hidden />
+                <span className="ch">{w.word}</span>
+              </span>
+            ))}
+          </div>
         ) : (
           <span className="row-text">
             {query ? renderHighlighted(seg.text, query, curPos) : seg.text}
           </span>
-        )}
-        {showDots && seg.words && seg.words.length > 0 && dur > 0 && (
-          <div className="word-dots">
-            {seg.words.map((w, i) => {
-              const mid = (w.start + w.end) / 2;
-              const left = Math.min(Math.max(((mid - seg.start) / dur) * 100, 0), 100);
-              return (
-                <span
-                  key={i}
-                  className="dot"
-                  style={{ left: `${left}%` }}
-                  title={w.word}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onWordSeek(w.start);
-                  }}
-                />
-              );
-            })}
-          </div>
         )}
       </div>
       <span className="row-count">{seg.text.replace(/\s/g, "").length}</span>
